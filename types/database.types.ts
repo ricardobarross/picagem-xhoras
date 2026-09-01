@@ -1,5 +1,6 @@
 // types/database.types.ts
-// Tipos manuais alinhados com supabase/migrations/0001_init.sql.
+// Tipos manuais alinhados com supabase/migrations/0001_init.sql + 0002_simplify.sql
+// + 0003_declared_income.sql.
 // Em produção, substituir/gerar via:
 //   npx supabase gen types typescript --project-id <id> > types/database.types.ts
 //
@@ -9,15 +10,15 @@
 // `never` em `.insert()`/`.update()` — é por isto que o `supabase gen
 // types` oficial gera sempre `type`, nunca `interface`.
 
-export type RateType = 'fixed' | 'percentage';
 export type PaymentMethod = 'card' | 'cash';
 export type BonusPaymentType = 'lump_sum' | 'monthly_installments';
 export type TransportFrequency = 'daily' | 'monthly';
 export type PaidBy = 'employee' | 'employer';
 export type IrsCalculationType = 'fixed_rate' | 'bracket';
-export type DayType = 'normal' | 'saturday' | 'sunday' | 'holiday';
-export type EntryStatus = 'in_progress' | 'completed';
-export type EntrySource = 'clock' | 'manual';
+
+// Categoria do dia, derivada da data (dia da semana) — não é guardada em
+// lado nenhum, é sempre calculada a partir de `entry_date`.
+export type DayCategory = 'weekday' | 'saturday' | 'sunday';
 
 export type Profile = {
   id: string;
@@ -33,23 +34,15 @@ export type UserSettings = {
   id: string;
   user_id: string;
 
-  base_hourly_rate: number;
+  // Tarifário: dia útil é o valor base; sábado = dia útil + extra; domingo
+  // = dia útil × multiplicador (por defeito 2, ou seja, o dobro).
+  weekday_rate: number;
+  saturday_extra_per_hour: number;
+  sunday_multiplier: number;
 
-  saturday_rate_type: RateType;
-  saturday_rate_value: number;
-  sunday_rate_type: RateType;
-  sunday_rate_value: number;
-  holiday_rate_type: RateType;
-  holiday_rate_value: number;
-  night_shift_rate_type: RateType;
-  night_shift_rate_value: number;
-  night_shift_start_time: string; // "HH:MM:SS"
-  night_shift_end_time: string;
-
-  overtime_daily_threshold_hours: number;
-  overtime_tier1_percentage: number;
-  overtime_tier1_max_hours: number;
-  overtime_tier2_percentage: number;
+  // Ciclo de pagamento: a folha fecha neste dia do mês (por defeito 20) e
+  // paga-se no dia 1 do mês seguinte ao fecho.
+  payroll_cutoff_day: number;
 
   meal_allowance_daily_value: number;
   meal_allowance_payment_method: PaymentMethod;
@@ -68,6 +61,11 @@ export type UserSettings = {
   irs_calculation_type: IrsCalculationType;
   irs_fixed_rate: number;
 
+  // Se true, sábado/domingo entram na base declarada (SS + IRS). Por
+  // defeito (false) só os dias úteis + subsídios tributáveis contam —
+  // cada trabalhador negoceia isto de forma diferente com o patrão.
+  declare_weekend_income: boolean;
+
   currency: string;
   created_at: string;
   updated_at: string;
@@ -83,18 +81,13 @@ export type IrsTaxBracket = {
   created_at: string;
 };
 
+// Um registo por dia: só a data e quantas horas foram trabalhadas nesse
+// dia. Sábado/domingo/dia útil é sempre deduzido de `entry_date`.
 export type TimeEntry = {
   id: string;
   user_id: string;
   entry_date: string; // "YYYY-MM-DD"
-  clock_in: string | null; // ISO timestamptz
-  break_start: string | null;
-  break_end: string | null;
-  clock_out: string | null;
-  day_type: DayType;
-  night_shift_override: boolean | null;
-  status: EntryStatus;
-  source: EntrySource;
+  hours_worked: number;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -130,13 +123,13 @@ export type Database = {
       };
       irs_tax_brackets: {
         Row: IrsTaxBracket;
-        Insert: Partial<IrsTaxBracket>;
+        Insert: Partial<IrsTaxBracket> & { user_settings_id: string; min_income: number; rate: number };
         Update: Partial<IrsTaxBracket>;
         Relationships: [];
       };
       time_entries: {
         Row: TimeEntry;
-        Insert: Partial<TimeEntry> & { user_id: string; entry_date: string };
+        Insert: Partial<TimeEntry> & { user_id: string; entry_date: string; hours_worked: number };
         Update: Partial<TimeEntry>;
         Relationships: [];
       };

@@ -1,52 +1,48 @@
 // lib/salary-calculator.ts
-// Motor de cálculo do salário líquido a partir dos registos de ponto
-// (TimeEntry[]) e da configuração remuneratória (UserSettings).
+// Motor de cálculo do salário líquido a partir dos registos diários de
+// horas (TimeEntry[]) e da configuração remuneratória (UserSettings).
 //
-// Fluxo geral:
-//   1. Para cada turno, calcular horas trabalhadas (bruto - pausa).
-//   2. Classificar essas horas em categorias: normal, extra (2 escalões),
-//      sábado, domingo, feriado, noturno (a componente noturna é sempre
-//      calculada à parte e SOMADA ao prémio, não substitui a categoria
-//      do dia — ex.: um turno de domingo à noite conta domingo + noturno).
-//   3. Multiplicar cada categoria pela respetiva taxa (fixa ou % sobre a
-//      base) para obter o rendimento das horas.
-//   4. Somar subsídios (alimentação, duodécimos de férias/Natal,
-//      transporte) para obter o rendimento bruto total.
-//   5. Separar o que entra para a base tributável (rendimento coletável)
-//      do que é isento, e aplicar Segurança Social + IRS.
+// Modelo simplificado:
+//   - Dia útil (seg-sex): weekday_rate €/h.
+//   - Sábado: weekday_rate + saturday_extra_per_hour.
+//   - Domingo: weekday_rate × sunday_multiplier (por defeito 2 = o dobro).
+//   - A categoria do dia é sempre deduzida de entry_date, nunca guardada.
+//
+// Fluxo:
+//   1. Classificar cada dia (weekday/saturday/sunday) e somar horas.
+//   2. Multiplicar cada categoria pela respetiva taxa → rendimento das horas.
+//   3. Somar subsídios (alimentação, transporte). O subsídio de férias/Natal
+//      não é um pagamento à parte neste modelo — já está embutido no valor
+//      da hora — por isso não entra em lado nenhum do cálculo.
+//   4. Separar o que entra para a base declarada (tributável) do que não
+//      entra. Por defeito, sábado/domingo NÃO entram na base declarada —
+//      isto é opcional (settings.declare_weekend_income), porque cada
+//      trabalhador tem um acordo diferente com o patrão.
+//   5. Aplicar Segurança Social (% da base declarada) + IRS (escalão ou
+//      taxa fixa, também sobre a base declarada).
 //   6. Líquido = Bruto total − Segurança Social − IRS.
 
-import type { TimeEntry, UserSettings, IrsTaxBracket, DayType } from '@/types/database.types';
-import { diffInHours, computeNightOverlapHours } from './time-utils';
-
-// ---------------------------------------------------------------------
-// Tipos de saída
-// ---------------------------------------------------------------------
+import type { TimeEntry, UserSettings, IrsTaxBracket } from '@/types/database.types';
+import { getDayCategory } from './time-utils';
 
 export interface HoursBreakdown {
-  normal: number;
+  weekday: number;
   saturday: number;
   sunday: number;
-  holiday: number;
-  night: number; // horas noturnas (adicional), já incluídas em normal/saturday/etc.
-  overtimeTier1: number;
-  overtimeTier2: number;
   total: number;
 }
 
 export interface GrossBreakdown {
-  fromNormalHours: number;
+  fromWeekdayHours: number;
   fromSaturdayHours: number;
   fromSundayHours: number;
-  fromHolidayHours: number;
-  fromNightPremium: number;
-  fromOvertime: number;
   mealAllowance: number;
-  vacationChristmasBonus: number;
   transportAllowance: number;
-  totalTaxable: number;      // entra para a base de IRS/SS
-  totalNonTaxable: number;   // isento (ex.: subsídio de alimentação até ao limite)
-  totalGross: number;        // taxable + nonTaxable
+  totalTaxable: number; // entra para a base de IRS/SS ("valor declarado")
+  totalNonTaxable: number; // isento / não declarado (recebido sem descontos)
+  totalGross: number; // taxable + nonTaxable — o que a trabalhadora recebe no total
+  weekendIncome: number; // fromSaturdayHours + fromSundayHours, para referência no dashboard
+  weekendDeclared: boolean; // eco de settings.declare_weekend_income, para a UI
 }
 
 export interface DeductionsBreakdown {
@@ -56,7 +52,6 @@ export interface DeductionsBreakdown {
 }
 
 export interface PayslipSummary {
-  period: { year: number; month: number };
   hours: HoursBreakdown;
   gross: GrossBreakdown;
   deductions: DeductionsBreakdown;
@@ -64,167 +59,79 @@ export interface PayslipSummary {
 }
 
 // ---------------------------------------------------------------------
-// 1–2. Horas trabalhadas por turno + classificação
+// 1. Horas por categoria de dia
 // ---------------------------------------------------------------------
 
-function shiftWorkedHours(entry: TimeEntry): number {
-  if (!entry.clock_in || !entry.clock_out) return 0;
-  const gross = diffInHours(entry.clock_in, entry.clock_out);
-  const pause =
-    entry.break_start && entry.break_end ? diffInHours(entry.break_start, entry.break_end) : 0;
-  return Math.max(0, gross - pause);
-}
-
-function shiftNightHours(entry: TimeEntry, settings: UserSettings): number {
-  if (entry.night_shift_override === false) return 0;
-  if (!entry.clock_in || !entry.clock_out) return 0;
-
-  if (entry.night_shift_override === true) {
-    return shiftWorkedHours(entry); // turno inteiro marcado como noturno
-  }
-
-  // Deteção automática por sobreposição com a janela configurada.
-  return computeNightOverlapHours(
-    new Date(entry.clock_in),
-    new Date(entry.clock_out),
-    settings.night_shift_start_time,
-    settings.night_shift_end_time,
-  );
-}
-
-/**
- * Agrega todos os turnos do período em totais por categoria.
- * As horas extra só se aplicam a dias 'normal' que excedam o limiar
- * diário configurado (overtime_daily_threshold_hours); em sábados,
- * domingos e feriados a totalidade das horas usa a taxa desse dia.
- */
-export function calculateHoursBreakdown(
-  entries: TimeEntry[],
-  settings: UserSettings,
-): HoursBreakdown {
-  const breakdown: HoursBreakdown = {
-    normal: 0,
-    saturday: 0,
-    sunday: 0,
-    holiday: 0,
-    night: 0,
-    overtimeTier1: 0,
-    overtimeTier2: 0,
-    total: 0,
-  };
+export function calculateHoursBreakdown(entries: TimeEntry[]): HoursBreakdown {
+  const breakdown: HoursBreakdown = { weekday: 0, saturday: 0, sunday: 0, total: 0 };
 
   for (const entry of entries) {
-    if (entry.status !== 'completed') continue; // turnos em curso não entram no cálculo
-
-    const worked = shiftWorkedHours(entry);
-    const night = shiftNightHours(entry, settings);
-    breakdown.night += night;
-    breakdown.total += worked;
-
-    if (entry.day_type === 'normal') {
-      const threshold = settings.overtime_daily_threshold_hours;
-      const regular = Math.min(worked, threshold);
-      const extra = Math.max(0, worked - threshold);
-
-      const tier1 = Math.min(extra, settings.overtime_tier1_max_hours);
-      const tier2 = Math.max(0, extra - settings.overtime_tier1_max_hours);
-
-      breakdown.normal += regular;
-      breakdown.overtimeTier1 += tier1;
-      breakdown.overtimeTier2 += tier2;
-    } else {
-      // sábado / domingo / feriado: sem separação de horas extra (a
-      // totalidade das horas já usa a taxa premium desse tipo de dia)
-      breakdown[entry.day_type as Exclude<DayType, 'normal'>] += worked;
-    }
+    const category = getDayCategory(entry.entry_date);
+    breakdown[category] += entry.hours_worked;
+    breakdown.total += entry.hours_worked;
   }
 
   return breakdown;
 }
 
 // ---------------------------------------------------------------------
-// 3–4. Rendimento bruto
+// 2–3. Rendimento bruto
 // ---------------------------------------------------------------------
-
-/** Resolve um par (tipo, valor) em €/h efetivo, dado o valor base. */
-function resolveRate(type: 'fixed' | 'percentage', value: number, baseRate: number): number {
-  return type === 'fixed' ? value : baseRate * (1 + value / 100);
-}
 
 export function calculateGrossBreakdown(
   hours: HoursBreakdown,
   settings: UserSettings,
-  daysWorkedInMonth: number,
+  daysWorkedInPeriod: number,
 ): GrossBreakdown {
-  const base = settings.base_hourly_rate;
+  const weekdayRate = settings.weekday_rate;
+  const saturdayRate = weekdayRate + settings.saturday_extra_per_hour;
+  const sundayRate = weekdayRate * settings.sunday_multiplier;
 
-  const saturdayRate = resolveRate(settings.saturday_rate_type, settings.saturday_rate_value, base);
-  const sundayRate = resolveRate(settings.sunday_rate_type, settings.sunday_rate_value, base);
-  const holidayRate = resolveRate(settings.holiday_rate_type, settings.holiday_rate_value, base);
-
-  const fromNormalHours = hours.normal * base;
+  const fromWeekdayHours = hours.weekday * weekdayRate;
   const fromSaturdayHours = hours.saturday * saturdayRate;
   const fromSundayHours = hours.sunday * sundayRate;
-  const fromHolidayHours = hours.holiday * holidayRate;
-
-  // Adicional noturno: um prémio somado por cima da taxa normal das horas
-  // que já foram contabilizadas acima (não duplica a hora, só o extra).
-  const nightPremiumRate =
-    settings.night_shift_rate_type === 'fixed'
-      ? settings.night_shift_rate_value
-      : base * (settings.night_shift_rate_value / 100);
-  const fromNightPremium = hours.night * nightPremiumRate;
-
-  const overtimeTier1Rate = base * (1 + settings.overtime_tier1_percentage / 100);
-  const overtimeTier2Rate = base * (1 + settings.overtime_tier2_percentage / 100);
-  const fromOvertime =
-    hours.overtimeTier1 * overtimeTier1Rate + hours.overtimeTier2 * overtimeTier2Rate;
 
   // ----- Subsídios -----
-  const mealAllowance = settings.meal_allowance_daily_value * daysWorkedInMonth;
-
-  const vacationChristmasBonus =
-    settings.bonus_payment_type === 'monthly_installments'
-      ? (base * 160) / 12 // aproximação: 1/12 de um "salário mensal" de referência (ajustável)
-      : 0; // valor de lump_sum deve ser lançado manualmente no mês configurado (bonus_lump_sum_month)
+  // Nota: o subsídio de férias/Natal (duodécimos) NÃO entra aqui — está
+  // embutido no valor da hora dela, não é um pagamento extra a somar.
+  const mealAllowance = settings.meal_allowance_daily_value * daysWorkedInPeriod;
 
   const transportAllowance =
     settings.transport_allowance_frequency === 'daily'
-      ? settings.transport_allowance_value * daysWorkedInMonth
+      ? settings.transport_allowance_value * daysWorkedInPeriod
       : settings.transport_allowance_value;
 
-  const taxableHoursIncome =
-    fromNormalHours +
-    fromSaturdayHours +
-    fromSundayHours +
-    fromHolidayHours +
-    fromNightPremium +
-    fromOvertime;
+  const weekendIncome = fromSaturdayHours + fromSundayHours;
+  const weekendDeclared = settings.declare_weekend_income;
+
+  // Por defeito o fim de semana não entra na base declarada (SS + IRS) —
+  // é recebido à parte, sem descontos. Cada utilizador pode ligar isto em
+  // Configurações, consoante o acordo que tem com o patrão.
+  const declaredHoursIncome = fromWeekdayHours + (weekendDeclared ? weekendIncome : 0);
+  const undeclaredHoursIncome = weekendDeclared ? 0 : weekendIncome;
 
   const nonTaxableMeal = settings.meal_allowance_taxable ? 0 : mealAllowance;
   const taxableMeal = settings.meal_allowance_taxable ? mealAllowance : 0;
 
-  const totalTaxable = taxableHoursIncome + taxableMeal + vacationChristmasBonus + transportAllowance;
-  const totalNonTaxable = nonTaxableMeal;
+  const totalTaxable = declaredHoursIncome + taxableMeal + transportAllowance;
+  const totalNonTaxable = nonTaxableMeal + undeclaredHoursIncome;
 
   return {
-    fromNormalHours,
+    fromWeekdayHours,
     fromSaturdayHours,
     fromSundayHours,
-    fromHolidayHours,
-    fromNightPremium,
-    fromOvertime,
     mealAllowance,
-    vacationChristmasBonus,
     transportAllowance,
     totalTaxable,
     totalNonTaxable,
     totalGross: totalTaxable + totalNonTaxable,
+    weekendIncome,
+    weekendDeclared,
   };
 }
 
 // ---------------------------------------------------------------------
-// 5. Descontos (Segurança Social + IRS)
+// 4. Descontos (Segurança Social + IRS)
 // ---------------------------------------------------------------------
 
 function calculateIrs(taxableBase: number, settings: UserSettings, brackets: IrsTaxBracket[]): number {
@@ -259,28 +166,23 @@ export function calculateDeductions(
 }
 
 // ---------------------------------------------------------------------
-// 6. Função de alto nível — usada pela Dashboard
+// 5. Função de alto nível — usada pela Dashboard
 // ---------------------------------------------------------------------
 
 export function calculatePayslip(params: {
-  year: number;
-  month: number; // 1-12
   entries: TimeEntry[];
   settings: UserSettings;
   brackets?: IrsTaxBracket[];
 }): PayslipSummary {
-  const { year, month, entries, settings, brackets = [] } = params;
+  const { entries, settings, brackets = [] } = params;
 
-  const daysWorkedInMonth = new Set(
-    entries.filter((e) => e.status === 'completed').map((e) => e.entry_date),
-  ).size;
+  const daysWorkedInPeriod = new Set(entries.map((e) => e.entry_date)).size;
 
-  const hours = calculateHoursBreakdown(entries, settings);
-  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInMonth);
+  const hours = calculateHoursBreakdown(entries);
+  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInPeriod);
   const deductions = calculateDeductions(gross, settings, brackets);
 
   return {
-    period: { year, month },
     hours,
     gross,
     deductions,

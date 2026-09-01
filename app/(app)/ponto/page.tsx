@@ -1,9 +1,10 @@
 // app/(app)/ponto/page.tsx
-// Server Component: busca o turno em aberto (se existir) e entrega-o
-// já pronto ao componente cliente, evitando um pedido extra no browser.
+// Server Component: busca os registos do mês atual e entrega-os já
+// prontos ao componente cliente, evitando um pedido extra no browser.
 
 import { createClient } from '@/lib/supabase/server';
-import { TimeTracker } from '@/components/time-tracker/TimeTracker';
+import { PontoClient } from '@/components/time-tracker/PontoClient';
+import { toDateOnlyString } from '@/lib/time-utils';
 
 export default async function PontoPage() {
   const supabase = await createClient();
@@ -12,16 +13,20 @@ export default async function PontoPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: openEntry } = await supabase
+  const now = new Date();
+  const start = toDateOnlyString(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = toDateOnlyString(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+
+  const { data: entries } = await supabase
     .from('time_entries')
     .select('*')
     .eq('user_id', user!.id)
-    .eq('status', 'in_progress')
-    .maybeSingle();
+    .gte('entry_date', start)
+    .lte('entry_date', end);
 
   return (
     <div className="flex justify-center py-10">
-      <TimeTracker initialEntry={openEntry ?? null} />
+      <PontoClient userId={user!.id} initialEntries={entries ?? []} />
     </div>
   );
 }
