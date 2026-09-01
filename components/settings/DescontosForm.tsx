@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import type { IrsCalculationType, IrsTaxBracket, UserSettings } from '@/types/database.types';
+import type { IrsCalculationType, IrsOfficialBracket, IrsTaxBracket, UserSettings } from '@/types/database.types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
@@ -59,12 +59,53 @@ export function DescontosForm({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [loadingOfficial, setLoadingOfficial] = useState(false);
+  const [officialYearLoaded, setOfficialYearLoaded] = useState<number | null>(null);
+
   function updateBracket(index: number, patch: Partial<BracketRow>) {
     setBrackets((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
   function removeBracket(index: number) {
     setBrackets((rows) => rows.filter((_, i) => i !== index));
+  }
+
+  // Pré-preenche a lista de escalões com a tabela geral de IRS mais
+  // recente disponível em `irs_official_brackets` (dados de referência —
+  // ver comentário na migração 0004). Fica tudo editável depois de
+  // carregado, e só grava de facto quando se clica em "Guardar".
+  async function handleLoadOfficialBrackets() {
+    setError(null);
+    setSaved(false);
+    setOfficialYearLoaded(null);
+    setLoadingOfficial(true);
+
+    const { data, error: fetchError } = await supabase
+      .from('irs_official_brackets')
+      .select('*')
+      .order('fiscal_year', { ascending: false })
+      .order('min_income', { ascending: true });
+
+    setLoadingOfficial(false);
+
+    if (fetchError) return setError(fetchError.message);
+    if (!data || data.length === 0) {
+      return setError('Ainda não há escalões oficiais gravados na base de dados.');
+    }
+
+    const typedData = data as IrsOfficialBracket[];
+    const latestYear = typedData[0].fiscal_year;
+    const latestRows = typedData.filter((b) => b.fiscal_year === latestYear);
+
+    setBrackets(
+      latestRows.map((b) => ({
+        min_income: String(b.min_income),
+        max_income: b.max_income === null ? '' : String(b.max_income),
+        rate: String(b.rate),
+        deduction: String(b.deduction),
+      })),
+    );
+    setOfficialYearLoaded(latestYear);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -233,6 +274,25 @@ export function DescontosForm({
               <span className="text-sm text-muted-foreground">
                 Escalões (imposto = valor declarado × taxa − dedução). Deixa &quot;Até&quot; vazio no último escalão.
               </span>
+
+              <Button type="button" variant="outline" onClick={handleLoadOfficialBrackets} disabled={loadingOfficial}>
+                {loadingOfficial ? 'A carregar…' : 'Carregar escalões oficiais'}
+              </Button>
+              {officialYearLoaded && (
+                <p className="text-xs text-muted-foreground">
+                  Escalões gerais de {officialYearLoaded} carregados (Continente). Confirma os valores no{' '}
+                  <a
+                    href="https://info.portaldasfinancas.gov.pt"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    Portal das Finanças
+                  </a>{' '}
+                  antes de fechar uma folha real — continuam editáveis abaixo.
+                </p>
+              )}
+
               <div className="grid grid-cols-[1fr_1fr_1fr_1fr_20px] gap-1 text-xs text-muted-foreground">
                 <span className="truncate">De (€)</span>
                 <span className="truncate">Até (€)</span>

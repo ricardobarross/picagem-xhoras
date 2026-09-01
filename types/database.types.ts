@@ -1,6 +1,6 @@
 // types/database.types.ts
 // Tipos manuais alinhados com supabase/migrations/0001_init.sql + 0002_simplify.sql
-// + 0003_declared_income.sql.
+// + 0003_declared_income.sql + 0004_official_irs_brackets.sql.
 // Em produção, substituir/gerar via:
 //   npx supabase gen types typescript --project-id <id> > types/database.types.ts
 //
@@ -81,6 +81,19 @@ export type IrsTaxBracket = {
   created_at: string;
 };
 
+// Tabela de referência (não editável na app) com os escalões gerais de
+// IRS do Continente por ano fiscal — usada só para pré-preencher
+// `irs_tax_brackets` a partir do botão "Carregar escalões oficiais".
+export type IrsOfficialBracket = {
+  id: string;
+  fiscal_year: number;
+  min_income: number;
+  max_income: number | null;
+  rate: number;
+  deduction: number;
+  created_at: string;
+};
+
 // Um registo por dia: só a data e quantas horas foram trabalhadas nesse
 // dia. Sábado/domingo/dia útil é sempre deduzido de `entry_date`.
 export type TimeEntry = {
@@ -131,6 +144,12 @@ export type Database = {
         Row: TimeEntry;
         Insert: Partial<TimeEntry> & { user_id: string; entry_date: string; hours_worked: number };
         Update: Partial<TimeEntry>;
+        Relationships: [];
+      };
+      irs_official_brackets: {
+        Row: IrsOfficialBracket;
+        Insert: Partial<IrsOfficialBracket> & { fiscal_year: number; min_income: number; rate: number; deduction: number };
+        Update: Partial<IrsOfficialBracket>;
         Relationships: [];
       };
     };
