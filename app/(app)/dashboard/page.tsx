@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { calculatePayslip } from '@/lib/salary-calculator';
 import {
@@ -6,6 +7,7 @@ import {
   getPayPeriod,
   toDateOnlyString,
   getDayCategory,
+  type PayPeriod,
 } from '@/lib/time-utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DailyHoursChart, StackedBar, type DailyHours } from '@/components/dashboard/DashboardCharts';
@@ -15,7 +17,26 @@ function euro(value: number) {
   return value.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' });
 }
 
-export default async function DashboardPage() {
+// Rótulo curto de um período para as "pills" de atalho — ex.: "ago./26".
+function formatPeriodPill(period: PayPeriod) {
+  return period.end.toLocaleDateString('pt-PT', { month: 'short', year: '2-digit' });
+}
+
+function samePeriod(a: PayPeriod, b: PayPeriod) {
+  return toDateOnlyString(a.start) === toDateOnlyString(b.start);
+}
+
+// A referência que identifica um período na URL é um dia dentro dele —
+// simplesmente o dia a seguir ao fecho anterior (o próprio period.start).
+function periodRef(period: PayPeriod) {
+  return toDateOnlyString(period.start);
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ periodo?: string }>;
+}) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -38,9 +59,41 @@ export default async function DashboardPage() {
   }
 
   const typedSettings = settings as UserSettings;
-  const period = getPayPeriod(new Date(), typedSettings.payroll_cutoff_day);
+
+  // O período por defeito é o atual (a partir de hoje); ?periodo=YYYY-MM-DD
+  // navega para outro período, escolhendo qualquer dia dentro dele.
+  const { periodo } = await searchParams;
+  const isValidDateParam = typeof periodo === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(periodo);
+  const referenceDate = isValidDateParam ? new Date(`${periodo}T00:00:00`) : new Date();
+  const safeReferenceDate = Number.isNaN(referenceDate.getTime()) ? new Date() : referenceDate;
+
+  const period = getPayPeriod(safeReferenceDate, typedSettings.payroll_cutoff_day);
+  const currentPeriod = getPayPeriod(new Date(), typedSettings.payroll_cutoff_day);
+  const isCurrentPeriod = samePeriod(period, currentPeriod);
+
   const periodStart = toDateOnlyString(period.start);
   const periodEnd = toDateOnlyString(period.end);
+
+  // Referências para navegar: um dia antes do início / um dia depois do
+  // fim do período em vista cai sempre no período anterior/seguinte.
+  const prevRefDate = new Date(period.start);
+  prevRefDate.setDate(prevRefDate.getDate() - 1);
+  const nextRefDate = new Date(period.end);
+  nextRefDate.setDate(nextRefDate.getDate() + 1);
+  const prevHref = `/dashboard?periodo=${toDateOnlyString(prevRefDate)}`;
+  const nextHref = `/dashboard?periodo=${toDateOnlyString(nextRefDate)}`;
+
+  // Atalhos rápidos: os últimos 6 períodos até ao atual (mais antigo → mais
+  // recente), para não ter de clicar em "anterior" repetidamente.
+  const periodPresets: PayPeriod[] = [];
+  let cursor = new Date(currentPeriod.start);
+  for (let i = 0; i < 6; i++) {
+    const p = getPayPeriod(cursor, typedSettings.payroll_cutoff_day);
+    periodPresets.push(p);
+    cursor = new Date(p.start);
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  periodPresets.reverse();
 
   const [{ data: entries }, { data: brackets }] = await Promise.all([
     supabase
@@ -79,13 +132,71 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">
-          Período atual: {formatDatePt(periodStart)} – {formatDatePt(periodEnd)}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Pagamento previsto: {formatDatePt(toDateOnlyString(period.paymentDate))}
-        </p>
+      <div className="flex flex-col gap-3">
+        {/* Seleção de período: uma única linha, acima de tudo o resto —
+            os atalhos rápidos primeiro, a navegação dia-a-dia ao lado. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1">
+            {periodPresets.map((p) => {
+              const active = samePeriod(p, period);
+              return (
+                <Link
+                  key={periodRef(p)}
+                  href={`/dashboard?periodo=${periodRef(p)}`}
+                  className={`rounded-md px-2.5 py-1 text-xs capitalize transition-colors ${
+                    active
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-secondary text-secondary-foreground hover:bg-accent'
+                  }`}
+                >
+                  {formatPeriodPill(p)}
+                </Link>
+              );
+            })}
+          </div>
+          <div className="ml-auto flex items-center gap-1">
+            <Link
+              href={prevHref}
+              className="rounded-md border border-input px-2 py-1 text-sm hover:bg-accent"
+              aria-label="Período anterior"
+            >
+              ←
+            </Link>
+            {!isCurrentPeriod && (
+              <Link
+                href="/dashboard"
+                className="rounded-md border border-input px-2.5 py-1 text-xs hover:bg-accent"
+              >
+                Atual
+              </Link>
+            )}
+            {isCurrentPeriod ? (
+              <span
+                className="cursor-not-allowed rounded-md border border-input px-2 py-1 text-sm text-muted-foreground opacity-40"
+                aria-hidden
+              >
+                →
+              </span>
+            ) : (
+              <Link
+                href={nextHref}
+                className="rounded-md border border-input px-2 py-1 text-sm hover:bg-accent"
+                aria-label="Período seguinte"
+              >
+                →
+              </Link>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h1 className="text-xl font-semibold">
+            {isCurrentPeriod ? 'Período atual' : 'Período'}: {formatDatePt(periodStart)} – {formatDatePt(periodEnd)}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Pagamento previsto: {formatDatePt(toDateOnlyString(period.paymentDate))}
+          </p>
+        </div>
       </div>
 
       {weekdayRateMissing && (
