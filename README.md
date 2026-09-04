@@ -17,6 +17,7 @@ Suporta dois regimes de trabalho: **Contrato Efetivo** (Trabalhador por Conta de
    4. `0004_official_irs_brackets.sql` — cria a tabela de referência `irs_official_brackets` com os escalões gerais de IRS 2026, usada pelo botão "Carregar escalões oficiais" em Configurações.
    5. `0005_contrato_efetivo.sql` — adiciona os campos de Contrato Efetivo (`base_salary`, `fixed_bonus`, `agreed_total_salary`, `overtime_fixed_rate`, `extra_meal_value`, perfil fiscal Art. 99º CIRS, calendário de subsídios).
    6. `0006_atomic_irs_brackets.sql` — cria a função RPC `replace_irs_tax_brackets`, usada pelo formulário de Descontos para gravar os escalões de IRS de forma atómica (substitui o antigo delete+insert em dois pedidos separados).
+   7. `0007_backfill_contrato_efetivo_legacy.sql` — defensiva: só faz algo se o projeto tiver colunas antigas de uma versão ad-hoc do Contrato Efetivo aplicada fora deste histórico (`payment_type`, `base_monthly_salary`, ...). Num projeto novo é um no-op inofensivo.
    - Alternativa via CLI, que aplica todas as migrações pendentes pela ordem correta automaticamente: `npx supabase login`, `npx supabase link --project-ref <ref>`, `npx supabase db push`.
 4. (Opcional, para o login com Google) Em **Authentication → Providers → Google**, ativa o provider e configura o Client ID/Secret. Em **Authentication → URL Configuration**, garante que `http://localhost:3000/auth/callback` está nos Redirect URLs.
 
@@ -86,7 +87,7 @@ Abre [http://localhost:3000](http://localhost:3000) — deves ser redirecionado 
 ├── types/database.types.ts                                   ✅
 ├── scripts/verify-calculations.ts                             ✅ script de verificação (npm run verify)
 ├── proxy.ts (substitui middleware.ts a partir do Next 16)    ✅
-└── supabase/migrations/0001..0006_*.sql                       ✅
+└── supabase/migrations/0001..0007_*.sql                       ✅
 ```
 
 `registos/page.tsx` e `relatorios/page.tsx` (histórico tabular editável e exportação PDF/CSV) continuam por fazer — não fazem parte do âmbito desta versão.
