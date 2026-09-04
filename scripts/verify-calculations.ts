@@ -150,11 +150,38 @@ checkTrue(
 
 checkTrue('Prejuízo total anual líquido < prejuízo total anual bruto', netLossAudit.totalAnnualLossProjectedNet < netLossAudit.totalAnnualLossProjected);
 
-console.log('\n--- Segurança Social no regime efetivo incide só sobre o salário base ---');
+console.log('\n--- Segurança Social no regime efetivo: base é salário + subsídios, mas nunca a Gratificação ---');
+// Sem subsídio no mês: a base de SS é só o salário base, a Gratificação
+// (prémio fixo/camuflagem) nunca entra.
 const ssSettings = baseSettings({ base_salary: 1500, fixed_bonus: 500, social_security_rate: 11 });
 const ssPayslip = calculatePayslip({ entries: [], settings: ssSettings });
-check('Base sujeita a SS é só o salário base (1.500€), não 1.500€+500€ de prémio', ssPayslip.gross.ssTaxableBase, 1500);
+check('Sem subsídio no mês: base de SS é só o salário base (1.500€), não 1.500€+500€ de prémio', ssPayslip.gross.ssTaxableBase, 1500);
 check('SS descontada é 11% de 1.500€ (165€), não de 2.000€ (220€)', ssPayslip.deductions.socialSecurity, 165);
+
+// Confirmado com o recibo real de novembro/2025 (M3T): Valor sujeito a SS =
+// 3.081,41€ = Vencimento Base (1.250,00) + Subsídio de Natal (1.210,41) +
+// Prémio de Produção (621,00) — só a Gratificação (300,00€) ficou fora.
+// O motor não tem uma rubrica própria de "Prémio de Produção" separada do
+// fixedBonus, por isso este teste usa só base + subsídio para confirmar que
+// o subsídio agora entra na base de SS (correção de 04/09/2026 — antes desta
+// correção o motor excluía também o subsídio, o que não corresponde ao
+// recibo real).
+const novemberSsSettings = baseSettings({
+  base_salary: 1250,
+  fixed_bonus: 300,
+  christmas_subsidy_month: 11,
+  social_security_rate: 11,
+});
+const novemberSsPayslip = calculatePayslip({ entries: [], settings: novemberSsSettings, referenceMonth: 11 });
+check(
+  'Com Subsídio de Natal no mês: base de SS inclui o subsídio (1.250€ + 1.250€ = 2.500€), não só o salário base',
+  novemberSsPayslip.gross.ssTaxableBase,
+  2500,
+);
+checkTrue(
+  'A Gratificação (fixedBonus) continua de fora da base de SS mesmo com subsídio no mês',
+  novemberSsPayslip.gross.ssTaxableBase < novemberSsPayslip.gross.totalTaxable,
+);
 
 console.log('\n--- Privacidade: conta nova (sem configuração) não herda os valores de outra conta ---');
 const unconfiguredSettings = baseSettings({

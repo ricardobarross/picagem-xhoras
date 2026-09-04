@@ -37,13 +37,20 @@ export interface GrossBreakdown {
   totalTaxable: number; // entra para a base de IRS ("valor declarado")
   totalNonTaxable: number; // isento / não declarado (recebido sem descontos)
   totalGross: number; // taxable + nonTaxable — o que a pessoa recebe no total
-  // Base de incidência da Segurança Social. No regime efetivo é só o
-  // salário base (Ricardo, 04/09/2026: "o cálculo da segurança social no
-  // efetivo é só referente ao salário base, o resto não entra") — prémio,
-  // horas extras, refeições extras e subsídios de férias/Natal não entram
-  // nesta base, ao contrário do totalTaxable (que continua a ser a base
-  // usada para o IRS). No regime horista mantém-se igual ao totalTaxable,
-  // como sempre foi.
+  // Base de incidência da Segurança Social. Confirmado com os recibos
+  // reais partilhados por Ricardo (04/09/2026, recibos de mai/jul/set/nov
+  // 2025): o "Valor sujeito a SS" de cada mês é sempre o Vencimento Base
+  // (líquido de faltas/baixa) + Subsídio de Férias/Natal + Prémio de
+  // Produção quando pago — e exclui sempre a "Gratificação" (o prémio
+  // fixo/variável usado para camuflar excedentes). Ex: novembro/2025,
+  // Valor sujeito a SS = 3.081,41€ = 1.250,00 (base) + 1.210,41 (subsídio
+  // de Natal) + 621,00 (prémio de produção); ficou de fora só a
+  // Gratificação de 300,00€. No regime efetivo, ssTaxableBase inclui por
+  // isso o salário base e os subsídios de férias/Natal — mas continua a
+  // excluir o prémio fixo, horas extras e refeições extras (ainda
+  // tratados como "Gratificação"/camuflagem, tal como no recibo real).
+  // Base usada para o IRS (totalTaxable) mantém-se inalterada. No regime
+  // horista mantém-se igual ao totalTaxable, como sempre foi.
   ssTaxableBase: number;
   weekendIncome: number; // fromSaturdayHours + fromSundayHours, para referência no dashboard
   weekendDeclared: boolean; // eco de settings.declare_weekend_income, para a UI
@@ -175,7 +182,7 @@ export function calculateGrossBreakdown(
       totalTaxable,
       totalNonTaxable,
       totalGross,
-      ssTaxableBase: baseSalary,
+      ssTaxableBase: baseSalary + holidaySubsidy + christmasSubsidy,
       weekendIncome: (hours.saturday + hours.sunday) * overtimeRate,
       weekendDeclared: true,
       baseSalary,
