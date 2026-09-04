@@ -4,13 +4,14 @@
 // Ecrã de picagem simplificado:
 //   1. Cartão rápido "quantas horas trabalhaste hoje" (para preencher ao
 //      fim do dia — um número, e ponto).
-//   2. Calendário do mês, editável: clicar num dia mostra um campo para
-//      escrever/corrigir as horas desse dia.
+//   2. Calendário do mês, editável: clicar num dia mostra um seletor de
+//      tipo de registo (trabalho / falta injustificada / baixa / falta
+//      justificada) e, quando aplicável, o campo de horas desse dia.
 
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import type { TimeEntry } from '@/types/database.types';
+import type { TimeEntry, TimeEntryType } from '@/types/database.types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toDateOnlyString, formatDatePt } from '@/lib/time-utils';
@@ -20,6 +21,38 @@ const MONTH_NAMES = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ];
+
+// Tipos que precisam de um número de horas; os outros (sick_leave,
+// justified_absence) representam sempre um dia inteiro por registo.
+const TYPES_WITH_HOURS: TimeEntryType[] = ['work', 'unjustified_absence'];
+
+const TYPE_CONFIG: Record<TimeEntryType, { label: string; shortLabel: string; badgeClass: string }> = {
+  work: {
+    label: 'Trabalho',
+    shortLabel: 'h',
+    badgeClass: 'bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-400',
+  },
+  unjustified_absence: {
+    label: 'Falta Injustificada',
+    shortLabel: 'h falta',
+    badgeClass: 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400',
+  },
+  sick_leave: {
+    label: 'Baixa Médica',
+    shortLabel: 'Baixa',
+    badgeClass: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
+  },
+  justified_absence: {
+    label: 'Falta Justificada',
+    shortLabel: 'Falta',
+    badgeClass: 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-400',
+  },
+};
+
+interface DayEntry {
+  type: TimeEntryType;
+  hours: number; // só relevante para os tipos em TYPES_WITH_HOURS
+}
 
 interface DayCell {
   date: Date;
@@ -49,6 +82,10 @@ function buildMonthGrid(year: number, month: number): DayCell[] {
   return cells;
 }
 
+function entryToDayEntry(e: TimeEntry): DayEntry {
+  return { type: e.entry_type ?? 'work', hours: e.hours_worked ?? 0 };
+}
+
 export function PontoClient({
   userId,
   initialEntries,
@@ -60,9 +97,9 @@ export function PontoClient({
   const today = useMemo(() => new Date(), []);
   const todayStr = useMemo(() => toDateOnlyString(today), [today]);
 
-  const [entriesMap, setEntriesMap] = useState<Record<string, number>>(() => {
-    const map: Record<string, number> = {};
-    for (const e of initialEntries) map[e.entry_date] = e.hours_worked;
+  const [entriesMap, setEntriesMap] = useState<Record<string, DayEntry>>(() => {
+    const map: Record<string, DayEntry> = {};
+    for (const e of initialEntries) map[e.entry_date] = entryToDayEntry(e);
     return map;
   });
 
@@ -70,12 +107,15 @@ export function PontoClient({
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
   const [todayInput, setTodayInput] = useState(
-    entriesMap[todayStr] !== undefined ? String(entriesMap[todayStr]) : '',
+    entriesMap[todayStr]?.type === 'work' && entriesMap[todayStr].hours > 0
+      ? String(entriesMap[todayStr].hours)
+      : '',
   );
   const [todaySaving, setTodaySaving] = useState(false);
   const [todaySaved, setTodaySaved] = useState(false);
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [editType, setEditType] = useState<TimeEntryType>('work');
   const [editValue, setEditValue] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +150,7 @@ export function PontoClient({
           for (const cell of buildMonthGrid(viewYear, viewMonth)) {
             if (cell.inMonth) delete next[cell.dateStr];
           }
-          for (const e of data ?? []) next[e.entry_date] = e.hours_worked;
+          for (const e of (data ?? []) as TimeEntry[]) next[e.entry_date] = entryToDayEntry(e);
           return next;
         });
       } catch {
@@ -122,9 +162,13 @@ export function PontoClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewYear, viewMonth, userId]);
 
-  async function upsertHours(dateStr: string, hours: number) {
+  // hours só é usado (e obrigatório > 0) para os tipos em TYPES_WITH_HOURS;
+  // para sick_leave/justified_absence cada registo é sempre um dia inteiro.
+  async function upsertEntry(dateStr: string, type: TimeEntryType, hours: number) {
     setError(null);
-    if (hours <= 0) {
+    const needsHours = TYPES_WITH_HOURS.includes(type);
+
+    if (needsHours && hours <= 0) {
       // 0 horas = remover o registo desse dia
       const { error: deleteError } = await supabase
         .from('time_entries')
@@ -140,11 +184,32 @@ export function PontoClient({
       return;
     }
 
-    const { error: upsertError } = await supabase
-      .from('time_entries')
-      .upsert({ user_id: userId, entry_date: dateStr, hours_worked: hours }, { onConflict: 'user_id,entry_date' });
+    const { error: upsertError } = await supabase.from('time_entries').upsert(
+      {
+        user_id: userId,
+        entry_date: dateStr,
+        entry_type: type,
+        hours_worked: needsHours ? hours : null,
+      },
+      { onConflict: 'user_id,entry_date' },
+    );
     if (upsertError) throw new Error(upsertError.message);
-    setEntriesMap((prev) => ({ ...prev, [dateStr]: hours }));
+    setEntriesMap((prev) => ({ ...prev, [dateStr]: { type, hours: needsHours ? hours : 0 } }));
+  }
+
+  async function removeEntry(dateStr: string) {
+    setError(null);
+    const { error: deleteError } = await supabase
+      .from('time_entries')
+      .delete()
+      .eq('user_id', userId)
+      .eq('entry_date', dateStr);
+    if (deleteError) throw new Error(deleteError.message);
+    setEntriesMap((prev) => {
+      const next = { ...prev };
+      delete next[dateStr];
+      return next;
+    });
   }
 
   async function handleSaveToday() {
@@ -155,7 +220,7 @@ export function PontoClient({
     setTodaySaving(true);
     setTodaySaved(false);
     try {
-      await upsertHours(todayStr, hours);
+      await upsertEntry(todayStr, 'work', hours);
       setTodaySaved(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao guardar.');
@@ -166,23 +231,51 @@ export function PontoClient({
 
   function handleSelectDay(dateStr: string) {
     setSelectedDate(dateStr);
-    setEditValue(entriesMap[dateStr] !== undefined ? String(entriesMap[dateStr]) : '');
+    const existing = entriesMap[dateStr];
+    setEditType(existing?.type ?? 'work');
+    setEditValue(existing && existing.hours > 0 ? String(existing.hours) : '');
     setError(null);
   }
 
   async function handleSaveEdit() {
     if (!selectedDate) return;
+    const needsHours = TYPES_WITH_HOURS.includes(editType);
     const hours = editValue.trim() === '' ? 0 : Number(editValue.replace(',', '.'));
-    if (Number.isNaN(hours) || hours < 0 || hours > 24) {
-      return setError('Introduz um número de horas válido (0 a 24).');
+
+    if (needsHours) {
+      if (Number.isNaN(hours) || hours < 0 || hours > 24) {
+        return setError('Introduz um número de horas válido (0 a 24).');
+      }
     }
+
     setEditSaving(true);
     try {
-      await upsertHours(selectedDate, hours);
-      if (selectedDate === todayStr) setTodayInput(hours > 0 ? String(hours) : '');
+      if (needsHours) {
+        await upsertEntry(selectedDate, editType, hours);
+        if (selectedDate === todayStr && editType === 'work') {
+          setTodayInput(hours > 0 ? String(hours) : '');
+        }
+      } else {
+        // Baixa / falta justificada: um dia inteiro, sem horas.
+        await upsertEntry(selectedDate, editType, 1);
+      }
       setSelectedDate(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao guardar.');
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function handleRemoveEdit() {
+    if (!selectedDate) return;
+    setEditSaving(true);
+    try {
+      await removeEntry(selectedDate);
+      if (selectedDate === todayStr) setTodayInput('');
+      setSelectedDate(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erro ao remover.');
     } finally {
       setEditSaving(false);
     }
@@ -194,6 +287,8 @@ export function PontoClient({
     setViewMonth(d.getMonth());
     setSelectedDate(null);
   }
+
+  const selectedNeedsHours = TYPES_WITH_HOURS.includes(editType);
 
   return (
     <div className="flex flex-col gap-6">
@@ -222,6 +317,9 @@ export function PontoClient({
             </Button>
           </div>
           {todaySaved && <p className="text-sm text-green-600">Guardado.</p>}
+          <p className="text-xs text-muted-foreground">
+            Para registar uma falta, baixa ou falta justificada, seleciona o dia no calendário abaixo.
+          </p>
         </CardContent>
       </Card>
 
@@ -251,9 +349,10 @@ export function PontoClient({
             {grid.map((cell) => {
               const dayOfWeek = cell.date.getDay(); // 0 = domingo, 6 = sábado
               const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-              const hours = entriesMap[cell.dateStr];
+              const entry = entriesMap[cell.dateStr];
               const isSelected = selectedDate === cell.dateStr;
               const isToday = cell.dateStr === todayStr;
+              const config = entry ? TYPE_CONFIG[entry.type] : null;
 
               return (
                 <button
@@ -264,37 +363,74 @@ export function PontoClient({
                     cell.inMonth ? '' : 'opacity-30',
                     isSelected ? 'border-primary ring-2 ring-ring' : 'border-border',
                     isToday ? 'font-semibold' : '',
-                    isWeekend ? 'bg-muted/50' : '',
-                    hours ? 'bg-green-100 dark:bg-green-950' : '',
+                    isWeekend && !config ? 'bg-muted/50' : '',
+                    config ? config.badgeClass : '',
                   ].join(' ')}
                 >
                   <span>{cell.date.getDate()}</span>
-                  {hours ? <span className="text-[10px] text-green-700 dark:text-green-400">{hours}h</span> : null}
+                  {config && (
+                    <span className="text-[10px]">
+                      {TYPES_WITH_HOURS.includes(entry!.type) ? `${entry!.hours}${config.shortLabel}` : config.shortLabel}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
 
           {selectedDate && (
-            <div className="mt-4 flex items-center gap-2 rounded-md border p-3">
-              <span className="text-sm">{formatDatePt(selectedDate)}:</span>
-              <input
-                type="number"
-                min={0}
-                max={24}
-                step={0.5}
-                autoFocus
-                placeholder="horas (0 para apagar)"
-                value={editValue}
-                onChange={(e) => setEditValue(e.target.value)}
-                className="w-32 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              />
-              <Button size="sm" onClick={handleSaveEdit} disabled={editSaving}>
-                {editSaving ? 'A guardar…' : 'Guardar'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedDate(null)}>
-                Cancelar
-              </Button>
+            <div className="mt-4 flex flex-col gap-3 rounded-md border p-3">
+              <span className="text-sm font-medium">{formatDatePt(selectedDate)}</span>
+
+              <div className="flex flex-wrap gap-1">
+                {(Object.keys(TYPE_CONFIG) as TimeEntryType[]).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setEditType(type)}
+                    className={[
+                      'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                      editType === type
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-input bg-background hover:bg-accent',
+                    ].join(' ')}
+                  >
+                    {TYPE_CONFIG[type].label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selectedNeedsHours ? (
+                  <input
+                    type="number"
+                    min={0}
+                    max={24}
+                    step={0.5}
+                    autoFocus
+                    placeholder="horas (0 para apagar)"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    className="w-40 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    Regista o dia {editType === 'sick_leave' ? 'inteiro de baixa' : 'inteiro de falta justificada'},
+                    sem necessidade de indicar horas.
+                  </span>
+                )}
+                <Button size="sm" onClick={handleSaveEdit} disabled={editSaving}>
+                  {editSaving ? 'A guardar…' : 'Guardar'}
+                </Button>
+                {entriesMap[selectedDate] && (
+                  <Button size="sm" variant="outline" onClick={handleRemoveEdit} disabled={editSaving}>
+                    Remover
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setSelectedDate(null)}>
+                  Cancelar
+                </Button>
+              </div>
             </div>
           )}
 

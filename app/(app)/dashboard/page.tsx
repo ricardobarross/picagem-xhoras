@@ -122,7 +122,9 @@ export default async function DashboardPage({
     : typedSettings.weekday_rate <= 0;
 
   // Uma barra por dia do período (incluindo dias sem registo, a 0h), para o gráfico
-  const hoursByDate = new Map(typedEntries.map((e) => [e.entry_date, e.hours_worked]));
+  const hoursByDate = new Map(
+    typedEntries.filter((e) => e.entry_type === 'work').map((e) => [e.entry_date, e.hours_worked ?? 0]),
+  );
   const dailyHours: DailyHours[] = [];
   for (let d = new Date(period.start); d <= period.end; d.setDate(d.getDate() + 1)) {
     const dateStr = toDateOnlyString(d);
@@ -361,6 +363,24 @@ export default async function DashboardPage({
           {isEffective ? (
             <>
               <Row label="Vencimento Base Oficial" value={payslip.gross.baseSalary} />
+              {payslip.gross.unjustifiedAbsenceHours > 0 && (
+                <Row
+                  label={`Faltas Injustificadas (${formatHours(payslip.gross.unjustifiedAbsenceHours)})`}
+                  value={-payslip.gross.unjustifiedAbsenceDeduction}
+                />
+              )}
+              {payslip.gross.sickLeaveDays > 0 && (
+                <Row
+                  label={`Baixa (${payslip.gross.sickLeaveDays} dia${payslip.gross.sickLeaveDays > 1 ? 's' : ''})`}
+                  value={-payslip.gross.sickLeaveDeduction}
+                />
+              )}
+              {payslip.gross.justifiedAbsenceDays > 0 && (
+                <Row
+                  label={`Falta Justificada (${payslip.gross.justifiedAbsenceDays} dia${payslip.gross.justifiedAbsenceDays > 1 ? 's' : ''}, sem desconto — Art. 255º CT)`}
+                  value={0}
+                />
+              )}
               <Row label="Prémio Fixo Mensal" value={payslip.gross.fixedBonus} />
               {payslip.gross.overtimeIncome > 0 && (
                 <Row

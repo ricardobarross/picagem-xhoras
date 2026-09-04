@@ -7,6 +7,7 @@
 import {
   calculateHoursBreakdown,
   calculateGrossBreakdown,
+  calculateAbsencesBreakdown,
   calculateIrs,
   calculatePayslip,
 } from '../lib/salary-calculator';
@@ -87,7 +88,7 @@ checkTrue('getDayCategory("2028-04-25") === "holiday" (terça-feira)', getDayCat
 console.log('\n--- Regime horista: feriado paga como domingo (Art. 269º CT), não como dia normal ---');
 const hourlySettings = baseSettings({ contract_regime: 'hourly', weekday_rate: 10, sunday_multiplier: 2 });
 const holidayEntry: TimeEntry[] = [
-  { id: '1', user_id: 'u', entry_date: '2028-04-25', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
+  { id: '1', user_id: 'u', entry_date: '2028-04-25', entry_type: 'work', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
 ];
 const holidayHours = calculateHoursBreakdown(holidayEntry);
 check('8h no feriado são contabilizadas em hours.holiday', holidayHours.holiday, 8);
@@ -182,6 +183,44 @@ checkTrue(
   'A Gratificação (fixedBonus) continua de fora da base de SS mesmo com subsídio no mês',
   novemberSsPayslip.gross.ssTaxableBase < novemberSsPayslip.gross.totalTaxable,
 );
+
+console.log('\n--- Faltas/Baixa no regime efetivo (calibrado com os recibos reais de mai/jul/set 2025, M3T) ---');
+const absenceSettings = baseSettings({ base_salary: 1250, fixed_bonus: 650.15 });
+
+const mayAbsenceEntries: TimeEntry[] = [
+  { id: 'a1', user_id: 'u', entry_date: '2025-05-15', entry_type: 'unjustified_absence', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
+];
+const mayPayslip = calculatePayslip({ entries: mayAbsenceEntries, settings: absenceSettings });
+check('Valor/hora legal de falta (1.250×12/2080, arredondado) é 7,21€, igual ao recibo real', Number((((1250 * 12) / 2080)).toFixed(2)), 7.21);
+check('Recibo real de maio/2025: 8h de falta injustificada descontam 57,68€ (não 57,69€)', mayPayslip.gross.unjustifiedAbsenceDeduction, 57.68);
+
+const julyAbsenceEntries: TimeEntry[] = [
+  { id: 'a2', user_id: 'u', entry_date: '2025-07-10', entry_type: 'unjustified_absence', hours_worked: 13, notes: null, created_at: '', updated_at: '' },
+];
+const julyPayslip = calculatePayslip({ entries: julyAbsenceEntries, settings: absenceSettings });
+check('Recibo real de julho/2025: 13h de falta injustificada descontam 93,73€', julyPayslip.gross.unjustifiedAbsenceDeduction, 93.73);
+
+const septemberAbsenceEntries: TimeEntry[] = [
+  { id: 'a3', user_id: 'u', entry_date: '2025-09-05', entry_type: 'sick_leave', hours_worked: null, notes: null, created_at: '', updated_at: '' },
+];
+const septemberPayslip = calculatePayslip({ entries: septemberAbsenceEntries, settings: absenceSettings });
+check('Recibo real de setembro/2025: 1 dia de baixa desconta 41,67€ (1.250€/30)', septemberPayslip.gross.sickLeaveDeduction, 41.67);
+check('A baixa reduz também a base de SS (1.250 - 41,67 = 1.208,33€, igual ao recibo real)', septemberPayslip.gross.ssTaxableBase, 1208.33);
+
+const justifiedEntries: TimeEntry[] = [
+  { id: 'a4', user_id: 'u', entry_date: '2025-06-02', entry_type: 'justified_absence', hours_worked: null, notes: null, created_at: '', updated_at: '' },
+];
+const justifiedPayslip = calculatePayslip({ entries: justifiedEntries, settings: absenceSettings });
+checkTrue(
+  'Falta justificada não desconta nada (Art. 255º CT)',
+  justifiedPayslip.gross.unjustifiedAbsenceDeduction === 0 && justifiedPayslip.gross.sickLeaveDeduction === 0,
+);
+check('Falta justificada fica registada (justifiedAbsenceDays = 1)', justifiedPayslip.gross.justifiedAbsenceDays, 1);
+
+const absencesOnly = calculateAbsencesBreakdown([...mayAbsenceEntries, ...septemberAbsenceEntries, ...justifiedEntries]);
+check('calculateAbsencesBreakdown soma horas de falta injustificada corretamente', absencesOnly.unjustifiedAbsenceHours, 8);
+check('calculateAbsencesBreakdown soma dias de baixa corretamente', absencesOnly.sickLeaveDays, 1);
+check('calculateAbsencesBreakdown soma dias de falta justificada corretamente', absencesOnly.justifiedAbsenceDays, 1);
 
 console.log('\n--- Privacidade: conta nova (sem configuração) não herda os valores de outra conta ---');
 const unconfiguredSettings = baseSettings({

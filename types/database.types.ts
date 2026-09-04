@@ -23,6 +23,11 @@ export type ContractRegime = 'effective' | 'hourly';
 export type IrsMaritalStatus = 'single' | 'married_1_earner' | 'married_2_earners';
 export type FiscalRegion = 'continente' | 'acores' | 'madeira';
 export type SubsidyMode = 'full_in_month' | 'duodecimos';
+// work = dia normal trabalhado; unjustified_absence = falta injustificada
+// (hours_worked guarda as horas em falta); sick_leave = baixa médica (um
+// registo = um dia inteiro, hours_worked não é usado); justified_absence =
+// falta justificada (Art. 255º CT, um registo = um dia, sem desconto).
+export type TimeEntryType = 'work' | 'unjustified_absence' | 'sick_leave' | 'justified_absence';
 
 // Categoria do dia, derivada da data (dia da semana) — não é guardada em
 // lado nenhum, é sempre calculada a partir de `entry_date`.
@@ -121,13 +126,17 @@ export type IrsOfficialBracket = {
   created_at: string;
 };
 
-// Um registo por dia: só a data e quantas horas foram trabalhadas nesse
-// dia. Sábado/domingo/dia útil é sempre deduzido de `entry_date`.
+// Um registo por dia: a data, o tipo (trabalho/falta/baixa) e, para dias
+// de trabalho ou falta injustificada, quantas horas. Sábado/domingo/dia
+// útil é sempre deduzido de `entry_date`.
 export type TimeEntry = {
   id: string;
   user_id: string;
   entry_date: string; // "YYYY-MM-DD"
-  hours_worked: number;
+  entry_type: TimeEntryType;
+  // Obrigatório para 'work'/'unjustified_absence' (horas); null/ignorado
+  // para 'sick_leave'/'justified_absence' (um registo = um dia inteiro).
+  hours_worked: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -169,7 +178,7 @@ export type Database = {
       };
       time_entries: {
         Row: TimeEntry;
-        Insert: Partial<TimeEntry> & { user_id: string; entry_date: string; hours_worked: number };
+        Insert: Partial<TimeEntry> & { user_id: string; entry_date: string };
         Update: Partial<TimeEntry>;
         Relationships: [];
       };

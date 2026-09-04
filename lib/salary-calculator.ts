@@ -27,6 +27,12 @@ export interface HoursBreakdown {
   overtimeHours: number; // Horas além das 8h, em fim de semana, ou em feriado
 }
 
+export interface AbsencesBreakdown {
+  unjustifiedAbsenceHours: number; // Faltas Hora Injustificada
+  sickLeaveDays: number; // Baixa médica (dias inteiros)
+  justifiedAbsenceDays: number; // Falta justificada (Art. 255º CT — sem perda de retribuição)
+}
+
 export interface GrossBreakdown {
   fromWeekdayHours: number;
   fromSaturdayHours: number;
@@ -63,6 +69,20 @@ export interface GrossBreakdown {
   holidaySubsidy: number;
   christmasSubsidy: number;
   contractRegime: 'effective' | 'hourly';
+
+  // Faltas/baixa (só têm efeito no regime efetivo — confirmado com recibos
+  // reais de mai/jul/set 2025, Metalomecânica 3 Triângulos: "Faltas Hora
+  // Injustificada" desconta ao valor/hora legal (base×12/2080, arredondado
+  // a 2 casas antes de multiplicar — dá exatamente os 7,21€/h do recibo) e
+  // "Baixa" desconta ao valor/dia (base/30, dá exatamente os 41,67€/dia do
+  // recibo). Ambas reduzem o Vencimento Base e por isso também a base de
+  // SS/IRS. Falta justificada não desconta nada (Art. 255º CT), fica só
+  // registada para referência.
+  unjustifiedAbsenceHours: number;
+  unjustifiedAbsenceDeduction: number;
+  sickLeaveDays: number;
+  sickLeaveDeduction: number;
+  justifiedAbsenceDays: number;
 }
 
 export interface DeductionsBreakdown {
@@ -94,18 +114,46 @@ export function calculateHoursBreakdown(entries: TimeEntry[]): HoursBreakdown {
   };
 
   for (const entry of entries) {
+    // Faltas/baixa/falta justificada não são horas trabalhadas — são
+    // contabilizadas à parte em calculateAbsencesBreakdown.
+    if ((entry.entry_type ?? 'work') !== 'work') continue;
     const category = getDayCategory(entry.entry_date);
-    breakdown[category] += entry.hours_worked;
-    breakdown.total += entry.hours_worked;
+    const hoursWorked = entry.hours_worked ?? 0;
+    breakdown[category] += hoursWorked;
+    breakdown.total += hoursWorked;
 
     if (category === 'weekday') {
-      const normal = Math.min(8, entry.hours_worked);
-      const extra = Math.max(0, entry.hours_worked - 8);
+      const normal = Math.min(8, hoursWorked);
+      const extra = Math.max(0, hoursWorked - 8);
       breakdown.standardHours += normal;
       breakdown.overtimeHours += extra;
     } else {
       // Fim de semana e feriados contam como horas extra / suplementares no regime padrão
-      breakdown.overtimeHours += entry.hours_worked;
+      breakdown.overtimeHours += hoursWorked;
+    }
+  }
+
+  return breakdown;
+}
+
+// ---------------------------------------------------------------------
+// 2b. Faltas e baixa no período
+// ---------------------------------------------------------------------
+
+export function calculateAbsencesBreakdown(entries: TimeEntry[]): AbsencesBreakdown {
+  const breakdown: AbsencesBreakdown = {
+    unjustifiedAbsenceHours: 0,
+    sickLeaveDays: 0,
+    justifiedAbsenceDays: 0,
+  };
+
+  for (const entry of entries) {
+    if (entry.entry_type === 'unjustified_absence') {
+      breakdown.unjustifiedAbsenceHours += entry.hours_worked ?? 0;
+    } else if (entry.entry_type === 'sick_leave') {
+      breakdown.sickLeaveDays += 1; // um registo = um dia inteiro de baixa
+    } else if (entry.entry_type === 'justified_absence') {
+      breakdown.justifiedAbsenceDays += 1;
     }
   }
 
@@ -121,6 +169,7 @@ export function calculateGrossBreakdown(
   settings: UserSettings,
   daysWorkedInPeriod: number,
   referenceMonth?: number, // 1 a 12
+  absences: AbsencesBreakdown = { unjustifiedAbsenceHours: 0, sickLeaveDays: 0, justifiedAbsenceDays: 0 },
 ): GrossBreakdown {
   const isEffective = settings.contract_regime === 'effective';
 
@@ -163,12 +212,29 @@ export function calculateGrossBreakdown(
     // Horas extras e refeições extras vêm camufladas dentro da rubrica de prémio/gratificação
     const totalBonusAndExtras = fixedBonus + overtimeIncome + extraMealsIncome;
 
-    // Tributação: Base + Prémio + Subsídios tributáveis + Subsídios de férias/natal
+    // Faltas injustificadas (por hora) e baixa (por dia) descontam ao
+    // Vencimento Base — confirmado com os recibos reais (ver comentário em
+    // GrossBreakdown). O valor/hora e o valor/dia são arredondados a 2
+    // casas antes de multiplicar pelas horas/dias, tal como aparece
+    // discriminado no recibo (7,21€/h e 41,67€/dia para um base de 1.250€).
+    const legalHourlyRate = Number((((baseSalary * 12) / 2080)).toFixed(2)); // Art. 271º CT
+    const dailyRate = Number((baseSalary / 30).toFixed(2));
+    const unjustifiedAbsenceDeduction = Number((absences.unjustifiedAbsenceHours * legalHourlyRate).toFixed(2));
+    const sickLeaveDeduction = Number((absences.sickLeaveDays * dailyRate).toFixed(2));
+    const totalAbsenceDeductions = Number((unjustifiedAbsenceDeduction + sickLeaveDeduction).toFixed(2));
+
+    // Tributação: Base + Prémio + Subsídios tributáveis + Subsídios de férias/natal - Faltas/Baixa
     const nonTaxableMeal = settings.meal_allowance_taxable ? 0 : mealAllowance;
     const taxableMeal = settings.meal_allowance_taxable ? mealAllowance : 0;
 
     const totalTaxable =
-      baseSalary + totalBonusAndExtras + taxableMeal + transportAllowance + holidaySubsidy + christmasSubsidy;
+      baseSalary +
+      totalBonusAndExtras +
+      taxableMeal +
+      transportAllowance +
+      holidaySubsidy +
+      christmasSubsidy -
+      totalAbsenceDeductions;
     const totalNonTaxable = nonTaxableMeal;
     const totalGross = totalTaxable + totalNonTaxable;
 
@@ -182,7 +248,7 @@ export function calculateGrossBreakdown(
       totalTaxable,
       totalNonTaxable,
       totalGross,
-      ssTaxableBase: baseSalary + holidaySubsidy + christmasSubsidy,
+      ssTaxableBase: baseSalary + holidaySubsidy + christmasSubsidy - totalAbsenceDeductions,
       weekendIncome: (hours.saturday + hours.sunday) * overtimeRate,
       weekendDeclared: true,
       baseSalary,
@@ -192,6 +258,11 @@ export function calculateGrossBreakdown(
       holidaySubsidy,
       christmasSubsidy,
       contractRegime: 'effective',
+      unjustifiedAbsenceHours: absences.unjustifiedAbsenceHours,
+      unjustifiedAbsenceDeduction,
+      sickLeaveDays: absences.sickLeaveDays,
+      sickLeaveDeduction,
+      justifiedAbsenceDays: absences.justifiedAbsenceDays,
     };
   }
 
@@ -242,6 +313,14 @@ export function calculateGrossBreakdown(
     holidaySubsidy: 0,
     christmasSubsidy: 0,
     contractRegime: 'hourly',
+    // Faltas/baixa só têm efeito no regime efetivo (ver comentário em
+    // GrossBreakdown) — no regime horista quem não trabalha simplesmente
+    // não recebe por essas horas, sem rubrica de desconto própria.
+    unjustifiedAbsenceHours: 0,
+    unjustifiedAbsenceDeduction: 0,
+    sickLeaveDays: 0,
+    sickLeaveDeduction: 0,
+    justifiedAbsenceDays: 0,
   };
 }
 
@@ -319,7 +398,8 @@ export function calculatePayslip(params: {
   const daysWorkedInPeriod = new Set(entries.map((e) => e.entry_date)).size;
 
   const hours = calculateHoursBreakdown(entries);
-  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth);
+  const absences = calculateAbsencesBreakdown(entries);
+  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth, absences);
   const deductions = calculateDeductions(gross, settings, brackets);
 
   return {
