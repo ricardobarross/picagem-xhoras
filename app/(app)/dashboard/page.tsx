@@ -135,16 +135,30 @@ export default async function DashboardPage({
 
   const subsidiesTotal = payslip.gross.mealAllowance + payslip.gross.transportAllowance;
 
+  // Perda anual estrutural nos subsídios de férias/Natal, calculada a
+  // partir das configurações reais desta conta — nunca um valor fixo, para
+  // não mostrar a um utilizador o prejuízo calculado com o salário de outra
+  // conta.
+  const yearlySubsidyLoss = Math.max(
+    0,
+    (typedSettings.agreed_total_salary - typedSettings.base_salary) * 2,
+  );
+
   return (
     <div className="flex flex-col gap-6">
-      {/* Banner de Aviso de Perdas para Contrato Efetivo */}
-      {isEffective && (
+      {/* Banner de Aviso de Perdas para Contrato Efetivo — só depois de a
+          conta ter configurado a remuneração (senão mostraria 0€ sem sentido). */}
+      {isEffective && !rateMissing && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm">
           <div className="flex items-center gap-2">
             <span className="flex h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
             <span className="text-foreground">
-              Modo <strong>Contrato Efetivo</strong> ativo (Base {euro(typedSettings.base_salary || 1500)} + Prémio {euro(typedSettings.fixed_bonus || 500)}).
-              O teu patrão está a poupar pelo menos <strong>1.000€/ano</strong> em subsídios de férias e natal.
+              Modo <strong>Contrato Efetivo</strong> ativo (Base {euro(typedSettings.base_salary)} + Prémio {euro(typedSettings.fixed_bonus)}).
+              {yearlySubsidyLoss > 0 && (
+                <>
+                  {' '}O teu patrão está a poupar pelo menos <strong>{euro(yearlySubsidyLoss)}/ano</strong> em subsídios de férias e natal.
+                </>
+              )}
             </span>
           </div>
           <Link
@@ -398,10 +412,10 @@ export default async function DashboardPage({
           <div className="my-2 h-px bg-border" />
           <Row label="Valor Líquido a Receber" value={payslip.netPay} bold />
 
-          {isEffective && (
+          {isEffective && !rateMissing && (
             <div className="mt-3 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground flex justify-between items-center">
               <span>
-                Queres saber quanto a empresa te estaria a pagar com base no salário legal de 2.000€?
+                Queres saber quanto a empresa te estaria a pagar com base no salário legal de {euro(typedSettings.agreed_total_salary)}?
               </span>
               <Link href="/perdas" className="font-semibold text-primary underline ml-2 whitespace-nowrap">
                 Ver Comparador de Perdas →

@@ -49,19 +49,20 @@ export function ContractSettingsForm({
     initialSettings.contract_regime || 'effective',
   );
 
-  // Remuneração Efetivo
-  const [baseSalary, setBaseSalary] = useState(String(initialSettings.base_salary ?? 1500));
-  const [fixedBonus, setFixedBonus] = useState(String(initialSettings.fixed_bonus ?? 500));
+  // Remuneração Efetivo — sem valor de exemplo por defeito: cada conta
+  // começa a 0€ e preenche os seus próprios dados (ver migração 0008).
+  const [baseSalary, setBaseSalary] = useState(String(initialSettings.base_salary ?? 0));
+  const [fixedBonus, setFixedBonus] = useState(String(initialSettings.fixed_bonus ?? 0));
   const [agreedTotalSalary, setAgreedTotalSalary] = useState(
-    String(initialSettings.agreed_total_salary ?? 2000),
+    String(initialSettings.agreed_total_salary ?? 0),
   );
 
   // Horas Extras e Refeições
   const [overtimeFixedRate, setOvertimeFixedRate] = useState(
-    String(initialSettings.overtime_fixed_rate ?? 12),
+    String(initialSettings.overtime_fixed_rate ?? 0),
   );
   const [extraMealValue, setExtraMealValue] = useState(
-    String(initialSettings.extra_meal_value ?? 9.5),
+    String(initialSettings.extra_meal_value ?? 0),
   );
 
   // Perfil Fiscal (Art. 99º CIRS)
@@ -91,7 +92,7 @@ export function ContractSettingsForm({
 
   // Subsídio de Alimentação Diário
   const [mealDailyValue, setMealDailyValue] = useState(
-    String(initialSettings.meal_allowance_daily_value ?? 6),
+    String(initialSettings.meal_allowance_daily_value ?? 0),
   );
   const [mealPaymentMethod, setMealPaymentMethod] = useState<PaymentMethod>(
     initialSettings.meal_allowance_payment_method || 'card',
@@ -243,7 +244,7 @@ export function ContractSettingsForm({
                   value={baseSalary}
                   onChange={(e) => setBaseSalary(e.target.value)}
                   className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="1500,00"
+                  placeholder="0,00"
                 />
                 <span className="text-[11px] text-muted-foreground">Declarado na folha oficial</span>
               </div>
@@ -258,7 +259,7 @@ export function ContractSettingsForm({
                   value={fixedBonus}
                   onChange={(e) => setFixedBonus(e.target.value)}
                   className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="500,00"
+                  placeholder="0,00"
                 />
                 <span className="text-[11px] text-muted-foreground">Gratificação regular</span>
               </div>
@@ -273,7 +274,7 @@ export function ContractSettingsForm({
                   value={agreedTotalSalary}
                   onChange={(e) => setAgreedTotalSalary(e.target.value)}
                   className="mt-1 w-full rounded-md border border-primary/50 bg-background px-3 py-2 text-sm font-semibold"
-                  placeholder="2000,00"
+                  placeholder="0,00"
                 />
                 <span className="text-[11px] text-muted-foreground">Base p/ auditoria de perdas</span>
               </div>
@@ -296,10 +297,10 @@ export function ContractSettingsForm({
                   value={overtimeFixedRate}
                   onChange={(e) => setOvertimeFixedRate(e.target.value)}
                   className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="12,00"
+                  placeholder="0,00"
                 />
                 <span className="text-[11px] text-muted-foreground">
-                  O teu patrão paga 12€ fixos (camuflados em prémio)
+                  Valor combinado com o empregador para cada hora extra
                 </span>
               </div>
 
@@ -313,7 +314,7 @@ export function ContractSettingsForm({
                   value={extraMealValue}
                   onChange={(e) => setExtraMealValue(e.target.value)}
                   className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="9,50"
+                  placeholder="0,00"
                 />
                 <span className="text-[11px] text-muted-foreground">
                   Refeição extra em dias de horas extras
@@ -386,7 +387,7 @@ export function ContractSettingsForm({
           {/* 5. Calendário de Subsídios de Férias e Natal */}
           <div className="rounded-lg border p-4">
             <h3 className="mb-3 text-sm font-semibold text-foreground">
-              Mês de Pagamento dos Subsídios (Sem Duodécimos)
+              Mês de Pagamento dos Subsídios
             </h3>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
@@ -404,7 +405,7 @@ export function ContractSettingsForm({
                     </option>
                   ))}
                 </select>
-                <span className="text-[11px] text-muted-foreground">No teu caso: Janeiro</span>
+                <span className="text-[11px] text-muted-foreground">Mais comum: Janeiro</span>
               </div>
 
               <div>
@@ -422,7 +423,7 @@ export function ContractSettingsForm({
                     </option>
                   ))}
                 </select>
-                <span className="text-[11px] text-muted-foreground">No teu caso: Novembro</span>
+                <span className="text-[11px] text-muted-foreground">Mais comum: Novembro</span>
               </div>
 
               <div className="sm:col-span-2">
@@ -437,7 +438,7 @@ export function ContractSettingsForm({
                   <option value="full_in_month">Por inteiro no respetivo mês (Sem duodécimos)</option>
                   <option value="duodecimos">Em duodécimos (diluído mensalmente)</option>
                 </select>
-                <span className="text-[11px] text-muted-foreground">No teu contrato: Não recebes duodécimos</span>
+                <span className="text-[11px] text-muted-foreground">Confirma no teu contrato de trabalho</span>
               </div>
             </div>
           </div>

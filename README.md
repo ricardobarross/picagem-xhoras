@@ -18,6 +18,7 @@ Suporta dois regimes de trabalho: **Contrato Efetivo** (Trabalhador por Conta de
    5. `0005_contrato_efetivo.sql` — adiciona os campos de Contrato Efetivo (`base_salary`, `fixed_bonus`, `agreed_total_salary`, `overtime_fixed_rate`, `extra_meal_value`, perfil fiscal Art. 99º CIRS, calendário de subsídios).
    6. `0006_atomic_irs_brackets.sql` — cria a função RPC `replace_irs_tax_brackets`, usada pelo formulário de Descontos para gravar os escalões de IRS de forma atómica (substitui o antigo delete+insert em dois pedidos separados).
    7. `0007_backfill_contrato_efetivo_legacy.sql` — defensiva: só faz algo se o projeto tiver colunas antigas de uma versão ad-hoc do Contrato Efetivo aplicada fora deste histórico (`payment_type`, `base_monthly_salary`, ...). Num projeto novo é um no-op inofensivo.
+   8. `0008_generic_effective_defaults.sql` — zera os valores por defeito (`base_salary`, `fixed_bonus`, `agreed_total_salary`, `overtime_fixed_rate`, `extra_meal_value`) para novas contas. Só afeta `insert`s futuros — não altera contas já configuradas.
    - Alternativa via CLI, que aplica todas as migrações pendentes pela ordem correta automaticamente: `npx supabase login`, `npx supabase link --project-ref <ref>`, `npx supabase db push`.
 4. (Opcional, para o login com Google) Em **Authentication → Providers → Google**, ativa o provider e configura o Client ID/Secret. Em **Authentication → URL Configuration**, garante que `http://localhost:3000/auth/callback` está nos Redirect URLs.
 
@@ -47,6 +48,10 @@ Abre [http://localhost:3000](http://localhost:3000) — deves ser redirecionado 
 5. Vai a **Picagem** (`/ponto`) e regista as horas trabalhadas por dia no calendário do mês. Cada alteração grava/atualiza uma linha em `time_entries` (podes confirmar na tab **Table Editor** do Supabase).
 6. Volta ao **Dashboard** — o resumo de horas e a simulação de recibo já refletem as picagens, calculados por `lib/salary-calculator.ts`. Dias úteis, sábados, domingos e feriados obrigatórios portugueses (calculados automaticamente em `lib/time-utils.ts`, incluindo os móveis — Sexta-feira Santa e Corpo de Deus) são discriminados separadamente.
 7. Em regime Efetivo, acede a **Auditoria de Perdas** (`/perdas`) para a comparação entre o que a empresa paga e o que a lei exige sobre o ordenado real acordado.
+
+### Multi-utilizador e privacidade
+
+Cada conta só vê os seus próprios dados — todas as tabelas (`profiles`, `user_settings`, `irs_tax_brackets`, `time_entries`) têm Row Level Security ativo, restrito a `auth.uid()`. Uma conta nova (ex.: a de um colega a quem partilhes a app) nasce com todos os valores de remuneração a 0€ (migração 0008) e nenhum texto da interface assume os teus dados — tudo em `/configuracoes`, `/dashboard` e `/perdas` é calculado a partir das configurações da própria conta autenticada, nunca de valores fixos no código.
 
 ### Coisas a saber sobre esta v1
 
@@ -87,7 +92,7 @@ Abre [http://localhost:3000](http://localhost:3000) — deves ser redirecionado 
 ├── types/database.types.ts                                   ✅
 ├── scripts/verify-calculations.ts                             ✅ script de verificação (npm run verify)
 ├── proxy.ts (substitui middleware.ts a partir do Next 16)    ✅
-└── supabase/migrations/0001..0007_*.sql                       ✅
+└── supabase/migrations/0001..0008_*.sql                       ✅
 ```
 
 `registos/page.tsx` e `relatorios/page.tsx` (histórico tabular editável e exportação PDF/CSV) continuam por fazer — não fazem parte do âmbito desta versão.

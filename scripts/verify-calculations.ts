@@ -124,5 +124,19 @@ const bracketSettings = baseSettings({ irs_calculation_type: 'bracket' });
 const irsMensal = calculateIrs(1000, bracketSettings, officialAnnualBrackets);
 check('IRS mensal sobre 1.000€ usando escalões ANUAIS (anualizado ×14, não aplicado direto)', irsMensal, 143.48);
 
+console.log('\n--- Privacidade: conta nova (sem configuração) não herda os valores de outra conta ---');
+const unconfiguredSettings = baseSettings({
+  base_salary: 0,
+  fixed_bonus: 0,
+  agreed_total_salary: 0,
+  overtime_fixed_rate: 0,
+  extra_meal_value: 0,
+});
+const unconfiguredPayslip = calculatePayslip({ entries: [], settings: unconfiguredSettings, referenceMonth: 1 });
+check('Bruto de uma conta não configurada é 0€ (nunca 1.500€/2.000€ de outra conta)', unconfiguredPayslip.gross.totalGross, 0);
+const unconfiguredAudit = auditContractLosses({ settings: unconfiguredSettings, overtimeHours: 10, extraMealsCount: 4 });
+check('Auditoria de perdas de uma conta não configurada não usa 2.000€ de outra conta', unconfiguredAudit.agreedRealSalary, 0);
+check('Percentagem de perda em indemnização não é NaN quando agreedRealSalary=0', unconfiguredAudit.severance.lossPercentage, 0);
+
 console.log(`\n${failures === 0 ? '✅ Todos os testes passaram.' : `❌ ${failures} teste(s) falharam.`}`);
 process.exitCode = failures === 0 ? 0 : 1;

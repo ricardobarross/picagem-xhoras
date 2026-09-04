@@ -117,13 +117,17 @@ export function calculateGrossBreakdown(
       : settings.transport_allowance_value;
 
   if (isEffective) {
-    const baseSalary = settings.base_salary || 1500;
-    const fixedBonus = settings.fixed_bonus || 500;
-    const overtimeRate = settings.overtime_fixed_rate || 12;
+    // Sem fallback para um valor "de exemplo": um utilizador que ainda não
+    // configurou o regime efetivo (base_salary = 0) deve ver 0€, nunca os
+    // valores de outra conta — o aviso "rateMissing" no dashboard já cobre
+    // este caso pedindo para preencher Configurações.
+    const baseSalary = settings.base_salary || 0;
+    const fixedBonus = settings.fixed_bonus || 0;
+    const overtimeRate = settings.overtime_fixed_rate || 0;
     const overtimeIncome = hours.overtimeHours * overtimeRate;
 
     // Refeições extras estimadas: 1 por dia com mais de 2h extras ou fins de semana trabalhados
-    const extraMealValue = settings.extra_meal_value || 9.5;
+    const extraMealValue = settings.extra_meal_value || 0;
     // Considera refeições extras se houver horas suplementares significativas
     const estimatedExtraMeals = Math.floor(hours.overtimeHours / 3);
     const extraMealsIncome = estimatedExtraMeals * extraMealValue;

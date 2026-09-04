@@ -26,6 +26,15 @@ function euro(value: number) {
   return value.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' });
 }
 
+const MONTH_NAMES_PT = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+];
+
+function monthName(month: number): string {
+  return MONTH_NAMES_PT[month - 1] ?? 'mês configurado';
+}
+
 export function LossAuditClient({ initialSettings }: { initialSettings: UserSettings }) {
   // Simuladores interativos
   const [simulatedOtHours, setSimulatedOtHours] = useState(15);
@@ -38,6 +47,13 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
     overtimeHours: simulatedOtHours,
     extraMealsCount: simulatedExtraMeals,
   });
+
+  const holidayMonthName = monthName(initialSettings.holiday_subsidy_month);
+  const christmasMonthName = monthName(initialSettings.christmas_subsidy_month);
+  // A mesma taxa de perda fiscal (~26% de SS+IRS) usada em audit.meals, aplicada
+  // por refeição em vez de ao total simulado, para a linha da tabela comparativa.
+  const netPerMealInBonus = Number((audit.meals.mealUnitValue * 0.74).toFixed(2));
+  const lossPerMeal = Number((audit.meals.mealUnitValue - netPerMealInBonus).toFixed(2));
 
   return (
     <div className="flex flex-col gap-8 w-full max-w-5xl mx-auto pb-16">
@@ -87,7 +103,8 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
               -{euro(audit.subsidies.totalAnnualSubsidiesLoss)}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              -500€ no Subsídio de Natal (Nov) e -500€ no Subsídio de Férias (Jan).
+              -{euro(audit.subsidies.christmasSubsidyLoss)} no Subsídio de Natal ({christmasMonthName}) e -
+              {euro(audit.subsidies.holidaySubsidyLoss)} no Subsídio de Férias ({holidayMonthName}).
             </p>
           </CardContent>
         </Card>
@@ -121,7 +138,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
           <CardContent>
             <div className="text-3xl font-extrabold text-orange-600">~26%</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              A refeição extra (9,50€) no prémio paga SS e IRS, em vez de 100% isenta em cartão.
+              A refeição extra ({euro(audit.meals.mealUnitValue)}) no prémio paga SS e IRS, em vez de 100% isenta em cartão.
             </p>
           </CardContent>
         </Card>
@@ -153,7 +170,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
             Tabela Comparativa: O Que a Empresa Paga vs. O Que a Lei Exige
           </CardTitle>
           <CardDescription>
-            Comparativo detalhado fundamentado no Código do Trabalho português para o teu salário acordado de 2.000€.
+            Comparativo detalhado fundamentado no Código do Trabalho português para o teu salário acordado de {euro(audit.agreedRealSalary)}.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -176,10 +193,10 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                     </span>
                   </td>
                   <td className="px-4 py-3 text-red-600 font-semibold">
-                    1.500,00 € (+ 500€ prémio)
+                    {euro(audit.declaredBaseSalary)} (+ {euro(audit.declaredFixedBonus)} prémio)
                   </td>
                   <td className="px-4 py-3 text-green-600 font-semibold">
-                    2.000,00 €
+                    {euro(audit.agreedRealSalary)}
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-red-600">
                     Art. 258º e 260º CT
@@ -188,26 +205,26 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
 
                 <tr>
                   <td className="px-4 py-3 font-medium">
-                    Subsídio de Férias (Janeiro)
+                    Subsídio de Férias ({holidayMonthName})
                     <span className="block text-xs font-normal text-muted-foreground">
                       Calculado sobre a retribuição efetiva
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">1.500,00 €</td>
-                  <td className="px-4 py-3 font-semibold text-foreground">2.000,00 €</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-500,00 €</td>
+                  <td className="px-4 py-3 text-muted-foreground">{euro(audit.subsidies.paidHolidaySubsidy)}</td>
+                  <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.subsidies.legalHolidaySubsidy)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">-{euro(audit.subsidies.holidaySubsidyLoss)}</td>
                 </tr>
 
                 <tr>
                   <td className="px-4 py-3 font-medium">
-                    Subsídio de Natal (Novembro)
+                    Subsídio de Natal ({christmasMonthName})
                     <span className="block text-xs font-normal text-muted-foreground">
                       Igual a 1 mês de remuneração
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">1.500,00 €</td>
-                  <td className="px-4 py-3 font-semibold text-foreground">2.000,00 €</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-500,00 €</td>
+                  <td className="px-4 py-3 text-muted-foreground">{euro(audit.subsidies.paidChristmasSubsidy)}</td>
+                  <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.subsidies.legalChristmasSubsidy)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">-{euro(audit.subsidies.christmasSubsidyLoss)}</td>
                 </tr>
 
                 <tr>
@@ -217,9 +234,11 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                       Art. 268º, nº 1, al. a): +25% sobre valor/hora
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">12,00 €/h</td>
-                  <td className="px-4 py-3 font-semibold text-foreground">14,42 €/h</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-2,42 €/h</td>
+                  <td className="px-4 py-3 text-muted-foreground">{euro(audit.employerOvertimeRate)}/h</td>
+                  <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.legalWeekday1stHourRate)}/h</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                    -{euro(audit.legalWeekday1stHourRate - audit.employerOvertimeRate)}/h
+                  </td>
                 </tr>
 
                 <tr>
@@ -229,9 +248,11 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                       Art. 268º, nº 1, al. a): +37,5% sobre valor/hora
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">12,00 €/h</td>
-                  <td className="px-4 py-3 font-semibold text-foreground">15,87 €/h</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-3,87 €/h</td>
+                  <td className="px-4 py-3 text-muted-foreground">{euro(audit.employerOvertimeRate)}/h</td>
+                  <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.legalWeekdaySubsequentRate)}/h</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                    -{euro(audit.legalWeekdaySubsequentRate - audit.employerOvertimeRate)}/h
+                  </td>
                 </tr>
 
                 <tr>
@@ -241,26 +262,28 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                       Art. 268º, nº 1, al. b): +50% sobre valor/hora
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">12,00 €/h</td>
-                  <td className="px-4 py-3 font-semibold text-foreground">17,31 €/h</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-5,31 €/h</td>
+                  <td className="px-4 py-3 text-muted-foreground">{euro(audit.employerOvertimeRate)}/h</td>
+                  <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.legalWeekendRate)}/h</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                    -{euro(audit.legalWeekendRate - audit.employerOvertimeRate)}/h
+                  </td>
                 </tr>
 
                 <tr>
                   <td className="px-4 py-3 font-medium">
-                    Refeições Extras (9,50 €)
+                    Refeições Extras ({euro(audit.meals.mealUnitValue)})
                     <span className="block text-xs font-normal text-muted-foreground">
                       Inseridas no prémio vs. Cartão de Refeição
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    Tributada (~6,95 € líquido)
+                    Tributada (~{euro(netPerMealInBonus)} líquido)
                   </td>
                   <td className="px-4 py-3 font-semibold text-foreground">
-                    100% Isenta (9,50 € líquido)
+                    100% Isenta ({euro(audit.meals.mealUnitValue)} líquido)
                   </td>
                   <td className="px-4 py-3 text-right font-bold text-red-600">
-                    -2,55 € por refeição
+                    -{euro(lossPerMeal)} por refeição
                   </td>
                 </tr>
               </tbody>
@@ -343,10 +366,10 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                 Perda Anual Garantida (Subsídios)
               </p>
               <p className="mt-1 text-2xl font-bold text-red-600">
-                -1.000,00 €
+                -{euro(audit.subsidies.totalAnnualSubsidiesLoss)}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                500€ em Janeiro + 500€ em Novembro
+                {euro(audit.subsidies.holidaySubsidyLoss)} em {holidayMonthName} + {euro(audit.subsidies.christmasSubsidyLoss)} em {christmasMonthName}
               </p>
             </div>
 
@@ -385,8 +408,8 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
               <ul className="mt-1 list-disc list-inside space-y-1 text-xs">
                 <li>Designação exata das rubricas (ex: &quot;Vencimento Base&quot;, &quot;Prémio de Produtividade&quot;, &quot;Gratificação&quot;).</li>
                 <li>Taxa percentual de Retenção na Fonte de IRS aplicada em cada mês.</li>
-                <li>Base de incidência de Segurança Social (se incide sobre 1.500€ ou sobre 2.000€).</li>
-                <li>Como vêm discriminadas as horas extras e refeições de 9,50€.</li>
+                <li>Base de incidência de Segurança Social (se incide sobre {euro(audit.declaredBaseSalary)} ou sobre {euro(audit.agreedRealSalary)}).</li>
+                <li>Como vêm discriminadas as horas extras e refeições de {euro(audit.meals.mealUnitValue)}.</li>
               </ul>
             </div>
           </div>
@@ -399,7 +422,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
               rows={4}
               value={receiptNotes}
               onChange={(e) => setReceiptNotes(e.target.value)}
-              placeholder="Exemplo: Recibo de Maio/2026: Vencimento Base 1500,00€ | Prémio 740,00€ (incluindo 20h extras a 12€) | IRS taxa 17,2% | SS 11%..."
+              placeholder="Exemplo: Recibo de Maio/2026: Vencimento Base 1000,00€ | Prémio 300,00€ (incluindo 10h extras a 8€) | IRS taxa 15% | SS 11%..."
               className="mt-1 w-full rounded-md border border-input bg-background p-3 text-sm focus:border-primary focus:outline-none"
             />
           </div>
@@ -446,7 +469,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
             <p className="mt-1">
               O montante dos subsídios de férias e de Natal deve corresponder à retribuição que o trabalhador
               auferiria se estivesse em trabalho efetivo, abrangendo não só o base mas também prémios regulares.
-              A empresa subtrai 1.000€ anuais ao limitar o subsídio a 1.500€.
+              A empresa subtrai {euro(audit.subsidies.totalAnnualSubsidiesLoss)} anuais ao limitar o subsídio a {euro(audit.declaredBaseSalary)}.
             </p>
           </div>
 
@@ -454,8 +477,8 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
             <p className="font-semibold text-foreground">Artigo 268.º — Remuneração do Trabalho Suplementar</p>
             <p className="mt-1">
               O trabalho suplementar é pago com acréscimo legal mínimo: 25% na 1.ª hora em dia útil, 37,5%
-              nas horas seguintes e 50% em dias de descanso/feriados. A imposição de uma tarifa fixa de 12€/h
-              sem descriminação em folha constitui contraordenação laboral grave.
+              nas horas seguintes e 50% em dias de descanso/feriados. A imposição de uma tarifa fixa de {euro(audit.employerOvertimeRate)}/h
+              sem discriminação em folha constitui contraordenação laboral grave.
             </p>
           </div>
 
@@ -463,7 +486,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
             <p className="font-semibold text-foreground">Artigo 366.º — Compensação por Cessação do Contrato</p>
             <p className="mt-1">
               Em caso de despedimento ou cessação de contrato, o cálculo da indemnização legal incide
-              sobre a retribuição base mensal. Ao teres 1.500€ em vez de 2.000€, a tua indemnização é reduzida em 25%.
+              sobre a retribuição base mensal. Ao teres {euro(audit.declaredBaseSalary)} em vez de {euro(audit.agreedRealSalary)}, a tua indemnização é reduzida em {audit.severance.lossPercentage}%.
             </p>
           </div>
         </CardContent>

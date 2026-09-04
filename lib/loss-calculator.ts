@@ -89,15 +89,18 @@ export function auditContractLosses(params: {
 }): ContractLossAudit {
   const { settings, overtimeHours = 10, extraMealsCount = 4 } = params;
 
-  const declaredBaseSalary = settings.base_salary || 1500;
-  const declaredFixedBonus = settings.fixed_bonus || 500;
-  const agreedRealSalary = settings.agreed_total_salary || (declaredBaseSalary + declaredFixedBonus) || 2000;
+  // Sem fallback para um valor "de exemplo": uma conta ainda não
+  // configurada deve ver 0€ em toda a auditoria, nunca os números de
+  // outra conta.
+  const declaredBaseSalary = settings.base_salary || 0;
+  const declaredFixedBonus = settings.fixed_bonus || 0;
+  const agreedRealSalary = settings.agreed_total_salary || (declaredBaseSalary + declaredFixedBonus);
 
   // Taxas Horárias (Art. 268º do Código do Trabalho)
   const hourlyRateLegal = calculateLegalHourlyRate(agreedRealSalary); // 11.54€
   const hourlyRateUnderDeclaredBase = calculateLegalHourlyRate(declaredBaseSalary); // 8.65€
 
-  const employerOvertimeRate = settings.overtime_fixed_rate || 12.0;
+  const employerOvertimeRate = settings.overtime_fixed_rate || 0;
 
   // Taxas legais mínimas sobre o ordenado real acordado (2000€)
   const legalWeekday1stHourRate = Number((hourlyRateLegal * 1.25).toFixed(2)); // +25% = 14.42€
@@ -147,7 +150,7 @@ export function auditContractLosses(params: {
   };
 
   // 3. Perda em Refeições Extras Camufladas no Prémio
-  const mealUnitValue = settings.extra_meal_value || 9.5;
+  const mealUnitValue = settings.extra_meal_value || 0;
   const totalGrossInBonus = Number((extraMealsCount * mealUnitValue).toFixed(2));
   // Quando vem em prémio em dinheiro: paga 11% SS + retenção IRS (~15%) = ~26% desconto indevido
   const estimatedTaxPercentage = 0.26;
@@ -174,7 +177,11 @@ export function auditContractLosses(params: {
   const dailyRateEmployer = declaredBaseSalary / 30;
   const dailyRateLegal = agreedRealSalary / 30;
   const lossPerYearOfSeniority = Number(((dailyRateLegal - dailyRateEmployer) * daysPerYear).toFixed(2));
-  const lossPercentage = Number((((severanceBasisLegal - severanceBasisEmployer) / severanceBasisLegal) * 100).toFixed(1));
+  // Guarda contra divisão por zero quando a conta ainda não tem salário configurado.
+  const lossPercentage =
+    severanceBasisLegal > 0
+      ? Number((((severanceBasisLegal - severanceBasisEmployer) / severanceBasisLegal) * 100).toFixed(1))
+      : 0;
 
   const severance: SeveranceImpact = {
     severanceBasisEmployer,
