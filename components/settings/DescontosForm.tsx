@@ -162,31 +162,19 @@ export function DescontosForm({
     }
 
     if (irsType === 'bracket') {
-      // Mais simples e menos sujeito a bugs do que fazer "diff" linha a
-      // linha: apaga os escalões antigos e grava outra vez os atuais.
-      const { error: deleteError } = await supabase
-        .from('irs_tax_brackets')
-        .delete()
-        .eq('user_settings_id', initialSettings.id);
+      // Substitui os escalões antigos pelos atuais numa única chamada RPC
+      // (função replace_irs_tax_brackets, migração 0006): o delete+insert
+      // corre dentro da mesma invocação de função no Postgres, por isso é
+      // atómico — ao contrário de dois pedidos HTTP separados, uma falha
+      // de rede a meio nunca deixa o utilizador sem escalões gravados.
+      const { error: rpcError } = await supabase.rpc('replace_irs_tax_brackets', {
+        p_user_settings_id: initialSettings.id,
+        p_brackets: parsedBrackets,
+      });
 
-      if (deleteError) {
+      if (rpcError) {
         setSaving(false);
-        return setError(deleteError.message);
-      }
-
-      const { error: insertError } = await supabase.from('irs_tax_brackets').insert(
-        parsedBrackets.map((b) => ({
-          user_settings_id: initialSettings.id,
-          min_income: b.min_income,
-          max_income: b.max_income,
-          rate: b.rate,
-          deduction: b.deduction,
-        })),
-      );
-
-      if (insertError) {
-        setSaving(false);
-        return setError(insertError.message);
+        return setError(rpcError.message);
       }
     }
 

@@ -20,12 +20,14 @@ const CATEGORY_LABEL: Record<DayCategory, string> = {
   weekday: 'Dia útil',
   saturday: 'Sábado',
   sunday: 'Domingo',
+  holiday: 'Feriado',
 };
 
 const CATEGORY_VAR: Record<DayCategory, string> = {
   weekday: 'var(--series-weekday)',
   saturday: 'var(--series-saturday)',
   sunday: 'var(--series-sunday)',
+  holiday: 'var(--series-holiday)',
 };
 
 function euro(value: number) {
@@ -41,6 +43,7 @@ function ChartStyles() {
         --series-weekday: #2a78d6;
         --series-saturday: #eb6834;
         --series-sunday: #1baf7a;
+        --series-holiday: #b3387a;
         --series-subsidies: #eda100;
         --series-liquido: #008300;
         --series-ss: #4a3aa7;
@@ -52,6 +55,7 @@ function ChartStyles() {
           --series-weekday: #3987e5;
           --series-saturday: #d95926;
           --series-sunday: #199e70;
+          --series-holiday: #c94e91;
           --series-subsidies: #c98500;
           --series-liquido: #008300;
           --series-ss: #9085e9;
@@ -132,6 +136,9 @@ export function DailyHoursChart({ days }: { days: DailyHours[] }) {
         <LegendSwatch color="var(--series-weekday)" label="Dia útil" />
         <LegendSwatch color="var(--series-saturday)" label="Sábado" />
         <LegendSwatch color="var(--series-sunday)" label="Domingo" />
+        {days.some((d) => d.category === 'holiday') && (
+          <LegendSwatch color="var(--series-holiday)" label="Feriado" />
+        )}
       </div>
     </div>
   );

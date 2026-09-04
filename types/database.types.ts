@@ -10,15 +10,23 @@
 // `never` em `.insert()`/`.update()` — é por isto que o `supabase gen
 // types` oficial gera sempre `type`, nunca `interface`.
 
+// Tipo genérico de valor JSON, igual ao que `supabase gen types typescript`
+// produz — usado nos parâmetros/retorno de funções RPC (jsonb).
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+
 export type PaymentMethod = 'card' | 'cash';
 export type BonusPaymentType = 'lump_sum' | 'monthly_installments';
 export type TransportFrequency = 'daily' | 'monthly';
 export type PaidBy = 'employee' | 'employer';
 export type IrsCalculationType = 'fixed_rate' | 'bracket';
+export type ContractRegime = 'effective' | 'hourly';
+export type IrsMaritalStatus = 'single' | 'married_1_earner' | 'married_2_earners';
+export type FiscalRegion = 'continente' | 'acores' | 'madeira';
+export type SubsidyMode = 'full_in_month' | 'duodecimos';
 
 // Categoria do dia, derivada da data (dia da semana) — não é guardada em
 // lado nenhum, é sempre calculada a partir de `entry_date`.
-export type DayCategory = 'weekday' | 'saturday' | 'sunday';
+export type DayCategory = 'weekday' | 'saturday' | 'sunday' | 'holiday';
 
 export type Profile = {
   id: string;
@@ -34,7 +42,26 @@ export type UserSettings = {
   id: string;
   user_id: string;
 
-  // Tarifário: dia útil é o valor base; sábado = dia útil + extra; domingo
+  // Regime de trabalho: 'effective' (contrato sem termo / TCO) ou 'hourly' (prestador / à hora)
+  contract_regime: ContractRegime;
+  base_salary: number; // Ex: 1500€
+  fixed_bonus: number; // Ex: 500€
+  agreed_total_salary: number; // Ex: 2000€ (acordado, usado para auditoria de perdas)
+  overtime_fixed_rate: number; // Ex: 12€/h
+  extra_meal_value: number; // Ex: 9.50€
+
+  // Perfil fiscal de retenção na fonte em Portugal (Art. 99º CIRS)
+  irs_marital_status: IrsMaritalStatus;
+  irs_dependents_count: number;
+  irs_has_disability: boolean;
+  fiscal_region: FiscalRegion;
+
+  // Calendário de subsídios de Férias e Natal
+  holiday_subsidy_month: number; // 1 = Janeiro, etc.
+  christmas_subsidy_month: number; // 11 = Novembro, etc.
+  subsidy_mode: SubsidyMode;
+
+  // Tarifário (usado no modo horista): dia útil é o valor base; sábado = dia útil + extra; domingo
   // = dia útil × multiplicador (por defeito 2, ou seja, o dobro).
   weekday_rate: number;
   saturday_extra_per_hour: number;
@@ -154,10 +181,22 @@ export type Database = {
       };
     };
     // Convenção usada pelo próprio `supabase gen types typescript` para
-    // "sem views/funções": um mapped type sobre `never` (sem índice de
+    // "sem views": um mapped type sobre `never` (sem índice de
     // assinatura). Usar Record<string, never> aqui colapsaria Tables
     // inteiro para `never` ao ser intersetado em TablesAndViews.
     Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
+    Functions: {
+      // supabase/migrations/0006_atomic_irs_brackets.sql — substitui os
+      // escalões de IRS de um user_settings numa única transação atómica
+      // (ver DescontosForm.tsx), em vez do antigo delete+insert em dois
+      // pedidos HTTP separados.
+      replace_irs_tax_brackets: {
+        Args: {
+          p_user_settings_id: string;
+          p_brackets: Json;
+        };
+        Returns: undefined;
+      };
+    };
   };
 };

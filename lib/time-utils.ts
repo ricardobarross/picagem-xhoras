@@ -20,11 +20,89 @@ export function parseDateOnly(dateStr: string): Date {
   return new Date(y, m - 1, d);
 }
 
-/** Categoria de um dia (dia útil / sábado / domingo) a partir de "YYYY-MM-DD". */
+/**
+ * Calcula a data da Páscoa (domingo) para um dado ano — algoritmo de
+ * Meeus/Jones/Butcher (calendário Gregoriano), usado para derivar os
+ * feriados móveis portugueses (Sexta-feira Santa e Corpo de Deus).
+ */
+function calculateEasterSunday(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31); // 3 = março, 4 = abril
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+/**
+ * Feriados obrigatórios em Portugal Continental para um dado ano (Código
+ * do Trabalho — Lei n.º 7/2009, art. 234º). Inclui os fixos e os móveis
+ * derivados da Páscoa (Sexta-feira Santa = Páscoa - 2 dias; Corpo de Deus
+ * = Páscoa + 60 dias). Não inclui feriados municipais nem os facultativos
+ * (Carnaval, aniversário do concelho), que variam por acordo/localidade.
+ */
+export function getPortugueseHolidays(year: number): Date[] {
+  const easter = calculateEasterSunday(year);
+  const goodFriday = new Date(easter);
+  goodFriday.setDate(easter.getDate() - 2);
+  const corpusChristi = new Date(easter);
+  corpusChristi.setDate(easter.getDate() + 60);
+
+  return [
+    new Date(year, 0, 1), // Ano Novo
+    goodFriday, // Sexta-feira Santa
+    easter, // Domingo de Páscoa
+    new Date(year, 3, 25), // Dia da Liberdade
+    new Date(year, 4, 1), // Dia do Trabalhador
+    corpusChristi, // Corpo de Deus
+    new Date(year, 5, 10), // Dia de Portugal
+    new Date(year, 7, 15), // Assunção de Nossa Senhora
+    new Date(year, 9, 5), // Implantação da República
+    new Date(year, 10, 1), // Todos os Santos
+    new Date(year, 11, 1), // Restauração da Independência
+    new Date(year, 11, 8), // Imaculada Conceição
+    new Date(year, 11, 25), // Natal
+  ];
+}
+
+const holidayCache = new Map<number, Set<string>>();
+
+function holidaySetForYear(year: number): Set<string> {
+  let set = holidayCache.get(year);
+  if (!set) {
+    set = new Set(getPortugueseHolidays(year).map(toDateOnlyString));
+    holidayCache.set(year, set);
+  }
+  return set;
+}
+
+/** Verifica se "YYYY-MM-DD" é feriado obrigatório em Portugal Continental. */
+export function isPortugueseHoliday(dateStr: string): boolean {
+  const year = Number(dateStr.slice(0, 4));
+  return holidaySetForYear(year).has(dateStr);
+}
+
+/**
+ * Categoria de um dia (dia útil / sábado / domingo / feriado) a partir de
+ * "YYYY-MM-DD". Feriados que caem ao fim de semana mantêm a categoria de
+ * fim de semana (já mais favorável ou equivalente); só os feriados em dia
+ * útil são reclassificados como 'holiday', para que ganhem o acréscimo
+ * legal correspondente em vez de serem pagos como um dia normal.
+ */
 export function getDayCategory(dateStr: string): DayCategory {
   const day = parseDateOnly(dateStr).getDay(); // 0 = domingo, 6 = sábado
   if (day === 0) return 'sunday';
   if (day === 6) return 'saturday';
+  if (isPortugueseHoliday(dateStr)) return 'holiday';
   return 'weekday';
 }
 
@@ -67,9 +145,10 @@ export function formatDatePt(dateStr: string): string {
   return `${d}/${m}/${y}`;
 }
 
-/** Formata horas decimais como "7h 30m". */
+/** Formata horas decimais como "7h 30m" ou "8h". */
 export function formatHours(hours: number): string {
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
+  const totalMin = Math.round(hours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }

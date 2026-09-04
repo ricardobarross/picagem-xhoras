@@ -2,25 +2,17 @@
 // Motor de cálculo do salário líquido a partir dos registos diários de
 // horas (TimeEntry[]) e da configuração remuneratória (UserSettings).
 //
-// Modelo simplificado:
-//   - Dia útil (seg-sex): weekday_rate €/h.
-//   - Sábado: weekday_rate + saturday_extra_per_hour.
-//   - Domingo: weekday_rate × sunday_multiplier (por defeito 2 = o dobro).
-//   - A categoria do dia é sempre deduzida de entry_date, nunca guardada.
-//
-// Fluxo:
-//   1. Classificar cada dia (weekday/saturday/sunday) e somar horas.
-//   2. Multiplicar cada categoria pela respetiva taxa → rendimento das horas.
-//   3. Somar subsídios (alimentação, transporte). O subsídio de férias/Natal
-//      não é um pagamento à parte neste modelo — já está embutido no valor
-//      da hora — por isso não entra em lado nenhum do cálculo.
-//   4. Separar o que entra para a base declarada (tributável) do que não
-//      entra. Por defeito, sábado/domingo NÃO entram na base declarada —
-//      isto é opcional (settings.declare_weekend_income), porque cada
-//      trabalhador tem um acordo diferente com o patrão.
-//   5. Aplicar Segurança Social (% da base declarada) + IRS (escalão ou
-//      taxa fixa, também sobre a base declarada).
-//   6. Líquido = Bruto total − Segurança Social − IRS.
+// Suporta dois regimes:
+//   1. 'effective': Contrato Efetivo / Trabalho por Conta de Outrem em Portugal:
+//      - Vencimento base mensal (ex: 1500€)
+//      - Prémio fixo regular (ex: 500€)
+//      - Horas extras remuneradas a taxa fixa acordada (ex: 12€/h)
+//      - Refeições extras (ex: 9.50€)
+//      - Subsídios de Férias e Natal por inteiro no mês estipulado (ex: Jan/Nov)
+//   2. 'hourly': Prestação de serviços / trabalho por hora:
+//      - Dia útil: weekday_rate €/h
+//      - Sábado: weekday_rate + saturday_extra_per_hour
+//      - Domingo: weekday_rate × sunday_multiplier
 
 import type { TimeEntry, UserSettings, IrsTaxBracket } from '@/types/database.types';
 import { getDayCategory } from './time-utils';
@@ -29,20 +21,33 @@ export interface HoursBreakdown {
   weekday: number;
   saturday: number;
   sunday: number;
+  holiday: number; // Feriados obrigatórios que caem em dia útil (ver getDayCategory)
   total: number;
+  standardHours: number; // Horas dentro do horário normal (até 8h/dia útil)
+  overtimeHours: number; // Horas além das 8h, em fim de semana, ou em feriado
 }
 
 export interface GrossBreakdown {
   fromWeekdayHours: number;
   fromSaturdayHours: number;
   fromSundayHours: number;
+  fromHolidayHours: number;
   mealAllowance: number;
   transportAllowance: number;
   totalTaxable: number; // entra para a base de IRS/SS ("valor declarado")
   totalNonTaxable: number; // isento / não declarado (recebido sem descontos)
-  totalGross: number; // taxable + nonTaxable — o que a trabalhadora recebe no total
+  totalGross: number; // taxable + nonTaxable — o que a pessoa recebe no total
   weekendIncome: number; // fromSaturdayHours + fromSundayHours, para referência no dashboard
   weekendDeclared: boolean; // eco de settings.declare_weekend_income, para a UI
+
+  // Campos específicos de Contrato Efetivo
+  baseSalary: number;
+  fixedBonus: number;
+  overtimeIncome: number;
+  extraMealsIncome: number;
+  holidaySubsidy: number;
+  christmasSubsidy: number;
+  contractRegime: 'effective' | 'hourly';
 }
 
 export interface DeductionsBreakdown {
@@ -59,16 +64,34 @@ export interface PayslipSummary {
 }
 
 // ---------------------------------------------------------------------
-// 1. Horas por categoria de dia
+// 1. Horas por categoria de dia e separação normal/extra
 // ---------------------------------------------------------------------
 
 export function calculateHoursBreakdown(entries: TimeEntry[]): HoursBreakdown {
-  const breakdown: HoursBreakdown = { weekday: 0, saturday: 0, sunday: 0, total: 0 };
+  const breakdown: HoursBreakdown = {
+    weekday: 0,
+    saturday: 0,
+    sunday: 0,
+    holiday: 0,
+    total: 0,
+    standardHours: 0,
+    overtimeHours: 0,
+  };
 
   for (const entry of entries) {
     const category = getDayCategory(entry.entry_date);
     breakdown[category] += entry.hours_worked;
     breakdown.total += entry.hours_worked;
+
+    if (category === 'weekday') {
+      const normal = Math.min(8, entry.hours_worked);
+      const extra = Math.max(0, entry.hours_worked - 8);
+      breakdown.standardHours += normal;
+      breakdown.overtimeHours += extra;
+    } else {
+      // Fim de semana e feriados contam como horas extra / suplementares no regime padrão
+      breakdown.overtimeHours += entry.hours_worked;
+    }
   }
 
   return breakdown;
@@ -82,33 +105,96 @@ export function calculateGrossBreakdown(
   hours: HoursBreakdown,
   settings: UserSettings,
   daysWorkedInPeriod: number,
+  referenceMonth?: number, // 1 a 12
 ): GrossBreakdown {
-  const weekdayRate = settings.weekday_rate;
-  const saturdayRate = weekdayRate + settings.saturday_extra_per_hour;
-  const sundayRate = weekdayRate * settings.sunday_multiplier;
+  const isEffective = settings.contract_regime === 'effective';
 
-  const fromWeekdayHours = hours.weekday * weekdayRate;
-  const fromSaturdayHours = hours.saturday * saturdayRate;
-  const fromSundayHours = hours.sunday * sundayRate;
-
-  // ----- Subsídios -----
-  // Nota: o subsídio de férias/Natal (duodécimos) NÃO entra aqui — está
-  // embutido no valor da hora dela, não é um pagamento extra a somar.
+  // Subsídios de transporte e alimentação padrão
   const mealAllowance = settings.meal_allowance_daily_value * daysWorkedInPeriod;
-
   const transportAllowance =
     settings.transport_allowance_frequency === 'daily'
       ? settings.transport_allowance_value * daysWorkedInPeriod
       : settings.transport_allowance_value;
 
+  if (isEffective) {
+    const baseSalary = settings.base_salary || 1500;
+    const fixedBonus = settings.fixed_bonus || 500;
+    const overtimeRate = settings.overtime_fixed_rate || 12;
+    const overtimeIncome = hours.overtimeHours * overtimeRate;
+
+    // Refeições extras estimadas: 1 por dia com mais de 2h extras ou fins de semana trabalhados
+    const extraMealValue = settings.extra_meal_value || 9.5;
+    // Considera refeições extras se houver horas suplementares significativas
+    const estimatedExtraMeals = Math.floor(hours.overtimeHours / 3);
+    const extraMealsIncome = estimatedExtraMeals * extraMealValue;
+
+    // Subsídios de Férias e Natal se o mês coincidir
+    let holidaySubsidy = 0;
+    let christmasSubsidy = 0;
+    if (referenceMonth !== undefined) {
+      if (referenceMonth === (settings.holiday_subsidy_month || 1)) {
+        holidaySubsidy = baseSalary; // A empresa paga apenas sobre o base
+      }
+      if (referenceMonth === (settings.christmas_subsidy_month || 11)) {
+        christmasSubsidy = baseSalary; // A empresa paga apenas sobre o base
+      }
+    }
+
+    // No modelo da empresa do utilizador:
+    // Horas extras e refeições extras vêm camufladas dentro da rubrica de prémio/gratificação
+    const totalBonusAndExtras = fixedBonus + overtimeIncome + extraMealsIncome;
+
+    // Tributação: Base + Prémio + Subsídios tributáveis + Subsídios de férias/natal
+    const nonTaxableMeal = settings.meal_allowance_taxable ? 0 : mealAllowance;
+    const taxableMeal = settings.meal_allowance_taxable ? mealAllowance : 0;
+
+    const totalTaxable =
+      baseSalary + totalBonusAndExtras + taxableMeal + transportAllowance + holidaySubsidy + christmasSubsidy;
+    const totalNonTaxable = nonTaxableMeal;
+    const totalGross = totalTaxable + totalNonTaxable;
+
+    return {
+      fromWeekdayHours: baseSalary,
+      fromSaturdayHours: hours.saturday * overtimeRate,
+      fromSundayHours: hours.sunday * overtimeRate,
+      fromHolidayHours: hours.holiday * overtimeRate,
+      mealAllowance,
+      transportAllowance,
+      totalTaxable,
+      totalNonTaxable,
+      totalGross,
+      weekendIncome: (hours.saturday + hours.sunday) * overtimeRate,
+      weekendDeclared: true,
+      baseSalary,
+      fixedBonus,
+      overtimeIncome,
+      extraMealsIncome,
+      holidaySubsidy,
+      christmasSubsidy,
+      contractRegime: 'effective',
+    };
+  }
+
+  // --- Modo Horista / Prestação de Serviços (Original) ---
+  const weekdayRate = settings.weekday_rate;
+  const saturdayRate = weekdayRate + settings.saturday_extra_per_hour;
+  const sundayRate = weekdayRate * settings.sunday_multiplier;
+  // Não há uma coluna própria para a taxa de feriado (ver migrações) — a
+  // lei equipara o descanso em feriado ao de domingo (Art. 269º CT), por
+  // isso reutiliza-se o mesmo multiplicador do domingo.
+  const holidayRate = weekdayRate * settings.sunday_multiplier;
+
+  const fromWeekdayHours = hours.weekday * weekdayRate;
+  const fromSaturdayHours = hours.saturday * saturdayRate;
+  const fromSundayHours = hours.sunday * sundayRate;
+  const fromHolidayHours = hours.holiday * holidayRate;
+
   const weekendIncome = fromSaturdayHours + fromSundayHours;
+  const premiumIncome = weekendIncome + fromHolidayHours;
   const weekendDeclared = settings.declare_weekend_income;
 
-  // Por defeito o fim de semana não entra na base declarada (SS + IRS) —
-  // é recebido à parte, sem descontos. Cada utilizador pode ligar isto em
-  // Configurações, consoante o acordo que tem com o patrão.
-  const declaredHoursIncome = fromWeekdayHours + (weekendDeclared ? weekendIncome : 0);
-  const undeclaredHoursIncome = weekendDeclared ? 0 : weekendIncome;
+  const declaredHoursIncome = fromWeekdayHours + (weekendDeclared ? premiumIncome : 0);
+  const undeclaredHoursIncome = weekendDeclared ? 0 : premiumIncome;
 
   const nonTaxableMeal = settings.meal_allowance_taxable ? 0 : mealAllowance;
   const taxableMeal = settings.meal_allowance_taxable ? mealAllowance : 0;
@@ -120,6 +206,7 @@ export function calculateGrossBreakdown(
     fromWeekdayHours,
     fromSaturdayHours,
     fromSundayHours,
+    fromHolidayHours,
     mealAllowance,
     transportAllowance,
     totalTaxable,
@@ -127,6 +214,13 @@ export function calculateGrossBreakdown(
     totalGross: totalTaxable + totalNonTaxable,
     weekendIncome,
     weekendDeclared,
+    baseSalary: 0,
+    fixedBonus: 0,
+    overtimeIncome: 0,
+    extraMealsIncome: 0,
+    holidaySubsidy: 0,
+    christmasSubsidy: 0,
+    contractRegime: 'hourly',
   };
 }
 
@@ -134,13 +228,36 @@ export function calculateGrossBreakdown(
 // 4. Descontos (Segurança Social + IRS)
 // ---------------------------------------------------------------------
 
-function calculateIrs(taxableBase: number, settings: UserSettings, brackets: IrsTaxBracket[]): number {
+export function calculateIrs(
+  taxableBase: number,
+  settings: UserSettings,
+  brackets: IrsTaxBracket[],
+): number {
+  if (taxableBase <= 0) return 0;
+
   if (settings.irs_calculation_type === 'fixed_rate') {
     return taxableBase * (settings.irs_fixed_rate / 100);
   }
 
-  // Modelo de escalões com parcela a abater, à semelhança das tabelas de
-  // retenção na fonte portuguesas: imposto = base * taxa − dedução.
+  if (brackets.length === 0) return 0;
+
+  // Deteção inteligente de escalões anuais (CIRS Art. 68º) vs escalões mensais:
+  // Se o menor limiar > 3000 ou maior limiar > 5000, a tabela é anual.
+  const isAnnualScale = brackets.some((b) => b.min_income > 3000 || (b.max_income !== null && b.max_income > 5000));
+
+  if (isAnnualScale) {
+    // Anualização fiscal para folha de pagamento (base × 14 meses)
+    const annualBase = taxableBase * 14;
+    const bracket = brackets
+      .filter((b) => annualBase >= b.min_income && (b.max_income === null || annualBase <= b.max_income))
+      .sort((a, b) => b.min_income - a.min_income)[0];
+
+    if (!bracket) return 0;
+    const annualTax = Math.max(0, annualBase * (bracket.rate / 100) - bracket.deduction);
+    return Math.round((annualTax / 14) * 100) / 100;
+  }
+
+  // Tabela em valores mensais diretos
   const bracket = brackets
     .filter((b) => taxableBase >= b.min_income && (b.max_income === null || taxableBase <= b.max_income))
     .sort((a, b) => b.min_income - a.min_income)[0];
@@ -154,8 +271,9 @@ export function calculateDeductions(
   settings: UserSettings,
   brackets: IrsTaxBracket[] = [],
 ): DeductionsBreakdown {
-  const socialSecurity = gross.totalTaxable * (settings.social_security_rate / 100);
-  const irsBase = gross.totalTaxable - socialSecurity; // SS é dedutível antes do IRS
+  const ssRate = settings.social_security_rate || 11;
+  const socialSecurity = gross.totalTaxable * (ssRate / 100);
+  const irsBase = Math.max(0, gross.totalTaxable - socialSecurity); // SS dedutível antes do IRS
   const irs = calculateIrs(irsBase, settings, brackets);
 
   return {
@@ -173,13 +291,14 @@ export function calculatePayslip(params: {
   entries: TimeEntry[];
   settings: UserSettings;
   brackets?: IrsTaxBracket[];
+  referenceMonth?: number; // 1 a 12
 }): PayslipSummary {
-  const { entries, settings, brackets = [] } = params;
+  const { entries, settings, brackets = [], referenceMonth } = params;
 
   const daysWorkedInPeriod = new Set(entries.map((e) => e.entry_date)).size;
 
   const hours = calculateHoursBreakdown(entries);
-  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInPeriod);
+  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth);
   const deductions = calculateDeductions(gross, settings, brackets);
 
   return {

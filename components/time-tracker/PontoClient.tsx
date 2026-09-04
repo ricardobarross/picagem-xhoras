@@ -83,17 +83,26 @@ export function PontoClient({
   const grid = useMemo(() => buildMonthGrid(viewYear, viewMonth), [viewYear, viewMonth]);
 
   // Vai buscar os registos do mês visível sempre que a navegação muda.
+  // Usa AbortController para cancelar o pedido anterior: sem isto, navegar
+  // rapidamente entre meses pode fazer a resposta de um mês antigo chegar
+  // depois da do mês atual e sobrepor-se aos dados corretos (race condition).
   useEffect(() => {
     const start = toDateOnlyString(new Date(viewYear, viewMonth, 1));
     const end = toDateOnlyString(new Date(viewYear, viewMonth + 1, 0));
 
-    supabase
-      .from('time_entries')
-      .select('*')
-      .eq('user_id', userId)
-      .gte('entry_date', start)
-      .lte('entry_date', end)
-      .then(({ data, error: fetchError }) => {
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const { data, error: fetchError } = await supabase
+          .from('time_entries')
+          .select('*')
+          .eq('user_id', userId)
+          .gte('entry_date', start)
+          .lte('entry_date', end)
+          .abortSignal(controller.signal);
+
+        if (controller.signal.aborted) return; // resposta obsoleta de uma navegação anterior — ignora
         if (fetchError) return setError(fetchError.message);
         setEntriesMap((prev) => {
           const next = { ...prev };
@@ -104,7 +113,12 @@ export function PontoClient({
           for (const e of data ?? []) next[e.entry_date] = e.hours_worked;
           return next;
         });
-      });
+      } catch {
+        // Pedido cancelado por navegação rápida entre meses — não é um erro real a mostrar.
+      }
+    })();
+
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewYear, viewMonth, userId]);
 

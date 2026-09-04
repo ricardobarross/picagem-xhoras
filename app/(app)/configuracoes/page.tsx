@@ -1,4 +1,6 @@
+import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { ContractSettingsForm } from '@/components/settings/ContractSettingsForm';
 import { RatesForm } from '@/components/settings/RatesForm';
 import { DescontosForm } from '@/components/settings/DescontosForm';
 import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
@@ -10,10 +12,14 @@ export default async function ConfiguracoesPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
+  if (!user) {
+    redirect('/login');
+  }
+
   const { data: settings } = await supabase
     .from('user_settings')
     .select('*')
-    .eq('user_id', user!.id)
+    .eq('user_id', user.id)
     .single();
 
   if (!settings) {
@@ -32,11 +38,28 @@ export default async function ConfiguracoesPage() {
     .eq('user_settings_id', typedSettings.id)
     .order('min_income', { ascending: true });
 
+  const isEffective = typedSettings.contract_regime === 'effective';
+
   return (
-    <div className="flex flex-col items-center gap-6 py-10">
-      <RatesForm userId={user!.id} initialSettings={typedSettings} />
+    <div className="flex flex-col items-center gap-8 py-8">
+      <div className="text-center max-w-xl">
+        <h1 className="text-2xl font-bold tracking-tight">Configurações de Remuneração e Contrato</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Gere os teus termos contratuais, perfil fiscal em Portugal, escalões de IRS e taxas de Segurança Social.
+        </p>
+      </div>
+
+      {/* Formulário Principal: Contrato Efetivo e Perfil Fiscal */}
+      <ContractSettingsForm userId={user.id} initialSettings={typedSettings} />
+
+      {/* Se o trabalhador estiver em regime horista, mostra o formulário de tarifas horárias */}
+      {!isEffective && (
+        <RatesForm userId={user.id} initialSettings={typedSettings} />
+      )}
+
+      {/* Formulário de Segurança Social e Escalões de IRS */}
       <DescontosForm
-        userId={user!.id}
+        userId={user.id}
         initialSettings={typedSettings}
         initialBrackets={(brackets ?? []) as IrsTaxBracket[]}
       />

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { calculatePayslip } from '@/lib/salary-calculator';
 import {
@@ -42,14 +43,16 @@ export default async function DashboardPage({
     data: { user },
   } = await supabase.auth.getUser();
 
+  if (!user) {
+    redirect('/login');
+  }
+
   const { data: settings } = await supabase
     .from('user_settings')
     .select('*')
-    .eq('user_id', user!.id)
+    .eq('user_id', user.id)
     .single();
 
-  // Sem configurações ainda gravadas (não deveria acontecer — o trigger
-  // handle_new_user() cria uma linha por defeito no registo).
   if (!settings) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -59,6 +62,7 @@ export default async function DashboardPage({
   }
 
   const typedSettings = settings as UserSettings;
+  const isEffective = typedSettings.contract_regime === 'effective';
 
   // O período por defeito é o atual (a partir de hoje); ?periodo=YYYY-MM-DD
   // navega para outro período, escolhendo qualquer dia dentro dele.
@@ -83,8 +87,7 @@ export default async function DashboardPage({
   const prevHref = `/dashboard?periodo=${toDateOnlyString(prevRefDate)}`;
   const nextHref = `/dashboard?periodo=${toDateOnlyString(nextRefDate)}`;
 
-  // Atalhos rápidos: os últimos 6 períodos até ao atual (mais antigo → mais
-  // recente), para não ter de clicar em "anterior" repetidamente.
+  // Atalhos rápidos: os últimos 6 períodos até ao atual
   const periodPresets: PayPeriod[] = [];
   let cursor = new Date(currentPeriod.start);
   for (let i = 0; i < 6; i++) {
@@ -99,7 +102,7 @@ export default async function DashboardPage({
     supabase
       .from('time_entries')
       .select('*')
-      .eq('user_id', user!.id)
+      .eq('user_id', user.id)
       .gte('entry_date', periodStart)
       .lte('entry_date', periodEnd),
     supabase.from('irs_tax_brackets').select('*').eq('user_settings_id', typedSettings.id),
@@ -111,12 +114,14 @@ export default async function DashboardPage({
     entries: typedEntries,
     settings: typedSettings,
     brackets: (brackets ?? []) as IrsTaxBracket[],
+    referenceMonth: period.end.getMonth() + 1,
   });
 
-  const weekdayRateMissing = typedSettings.weekday_rate <= 0;
+  const rateMissing = isEffective
+    ? (typedSettings.base_salary ?? 0) <= 0
+    : typedSettings.weekday_rate <= 0;
 
-  // Uma barra por dia do período (incluindo dias sem registo, a 0h), para
-  // o gráfico de horas — assim dá para ver de imediato os "buracos".
+  // Uma barra por dia do período (incluindo dias sem registo, a 0h), para o gráfico
   const hoursByDate = new Map(typedEntries.map((e) => [e.entry_date, e.hours_worked]));
   const dailyHours: DailyHours[] = [];
   for (let d = new Date(period.start); d <= period.end; d.setDate(d.getDate() + 1)) {
@@ -132,9 +137,26 @@ export default async function DashboardPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Banner de Aviso de Perdas para Contrato Efetivo */}
+      {isEffective && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
+            <span className="text-foreground">
+              Modo <strong>Contrato Efetivo</strong> ativo (Base {euro(typedSettings.base_salary || 1500)} + Prémio {euro(typedSettings.fixed_bonus || 500)}).
+              O teu patrão está a poupar pelo menos <strong>1.000€/ano</strong> em subsídios de férias e natal.
+            </span>
+          </div>
+          <Link
+            href="/perdas"
+            className="inline-flex items-center whitespace-nowrap font-semibold text-red-600 hover:underline"
+          >
+            Ver Auditoria de Perdas →
+          </Link>
+        </div>
+      )}
+
       <div className="flex flex-col gap-3">
-        {/* Seleção de período: uma única linha, acima de tudo o resto —
-            os atalhos rápidos primeiro, a navegação dia-a-dia ao lado. */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap gap-1">
             {periodPresets.map((p) => {
@@ -199,13 +221,13 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {weekdayRateMissing && (
+      {rateMissing && (
         <Card className="border-yellow-400">
           <CardContent className="pt-6 text-sm">
-            Ainda não definiste o valor por hora em{' '}
-            <a href="/configuracoes" className="underline">
+            Ainda não definiste a tua remuneração em{' '}
+            <Link href="/configuracoes" className="underline font-semibold">
               Configurações
-            </a>
+            </Link>{' '}
             — os valores abaixo estão a 0€.
           </CardContent>
         </Card>
@@ -255,10 +277,26 @@ export default async function DashboardPage({
           <CardContent>
             <StackedBar
               segments={[
-                { label: 'Dias úteis', value: payslip.gross.fromWeekdayHours, color: 'var(--series-weekday)' },
-                { label: 'Sábados', value: payslip.gross.fromSaturdayHours, color: 'var(--series-saturday)' },
-                { label: 'Domingos', value: payslip.gross.fromSundayHours, color: 'var(--series-sunday)' },
-                { label: 'Subsídios', value: subsidiesTotal, color: 'var(--series-subsidies)' },
+                {
+                  label: isEffective ? 'Salário Base' : 'Dias úteis',
+                  value: isEffective ? payslip.gross.baseSalary : payslip.gross.fromWeekdayHours,
+                  color: 'var(--series-weekday)',
+                },
+                {
+                  label: isEffective ? 'Prémios & Extras' : 'Sábados',
+                  value: isEffective
+                    ? payslip.gross.fixedBonus + payslip.gross.overtimeIncome + payslip.gross.extraMealsIncome
+                    : payslip.gross.fromSaturdayHours,
+                  color: 'var(--series-saturday)',
+                },
+                {
+                  label: isEffective ? 'Subs. Férias/Natal' : 'Domingos',
+                  value: isEffective
+                    ? payslip.gross.holidaySubsidy + payslip.gross.christmasSubsidy
+                    : payslip.gross.fromSundayHours,
+                  color: 'var(--series-sunday)',
+                },
+                { label: 'Alimentação / Transp.', value: subsidiesTotal, color: 'var(--series-subsidies)' },
               ]}
             />
           </CardContent>
@@ -284,41 +322,91 @@ export default async function DashboardPage({
         <CardHeader>
           <CardTitle>Discriminação de horas</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+        <CardContent className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+          <p>Total: {formatHours(payslip.hours.total)}</p>
           <p>Dias úteis: {formatHours(payslip.hours.weekday)}</p>
-          <p>Sábados: {formatHours(payslip.hours.saturday)}</p>
-          <p>Domingos: {formatHours(payslip.hours.sunday)}</p>
+          <p>Fins de semana: {formatHours(payslip.hours.saturday + payslip.hours.sunday)}</p>
+          {payslip.hours.holiday > 0 && <p>Feriados: {formatHours(payslip.hours.holiday)}</p>}
+          <p>
+            Horas extras:{' '}
+            <strong className="text-primary">{formatHours(payslip.hours.overtimeHours)}</strong>
+          </p>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Simulação de recibo</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Simulação do Recibo de Vencimento</CardTitle>
+            <span className="text-xs text-muted-foreground">
+              {isEffective ? 'Regime: Contrato Efetivo' : 'Regime: Horista'}
+            </span>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-1 text-sm">
-          <Row label="Dias úteis" value={payslip.gross.fromWeekdayHours} />
-          <Row label="Sábados" value={payslip.gross.fromSaturdayHours} />
-          <Row label="Domingos" value={payslip.gross.fromSundayHours} />
-          <Row label="Subsídio de alimentação" value={payslip.gross.mealAllowance} />
-          <Row label="Subsídio de transporte" value={payslip.gross.transportAllowance} />
-          <div className="my-2 h-px bg-border" />
-          <Row label="Valor declarado (base de descontos)" value={payslip.gross.totalTaxable} />
-          {!payslip.gross.weekendDeclared && payslip.gross.weekendIncome > 0 && (
-            <Row label="Valor não declarado (fim de semana)" value={payslip.gross.totalNonTaxable} />
+          {isEffective ? (
+            <>
+              <Row label="Vencimento Base Oficial" value={payslip.gross.baseSalary} />
+              <Row label="Prémio Fixo Mensal" value={payslip.gross.fixedBonus} />
+              {payslip.gross.overtimeIncome > 0 && (
+                <Row
+                  label={`Horas Extras (${formatHours(payslip.hours.overtimeHours)} a ${euro(typedSettings.overtime_fixed_rate || 12)}/h)`}
+                  value={payslip.gross.overtimeIncome}
+                />
+              )}
+              {payslip.gross.extraMealsIncome > 0 && (
+                <Row
+                  label="Refeições Extras (embutidas no prémio)"
+                  value={payslip.gross.extraMealsIncome}
+                />
+              )}
+              {payslip.gross.holidaySubsidy > 0 && (
+                <Row label="Subsídio de Férias (Pago em Janeiro)" value={payslip.gross.holidaySubsidy} />
+              )}
+              {payslip.gross.christmasSubsidy > 0 && (
+                <Row label="Subsídio de Natal (Pago em Novembro)" value={payslip.gross.christmasSubsidy} />
+              )}
+              <Row label="Subsídio de Alimentação" value={payslip.gross.mealAllowance} />
+              {payslip.gross.transportAllowance > 0 && (
+                <Row label="Subsídio de Transporte" value={payslip.gross.transportAllowance} />
+              )}
+            </>
+          ) : (
+            <>
+              <Row label="Dias úteis" value={payslip.gross.fromWeekdayHours} />
+              <Row label="Sábados" value={payslip.gross.fromSaturdayHours} />
+              <Row label="Domingos" value={payslip.gross.fromSundayHours} />
+              {payslip.gross.fromHolidayHours > 0 && (
+                <Row label="Feriados" value={payslip.gross.fromHolidayHours} />
+              )}
+              <Row label="Subsídio de alimentação" value={payslip.gross.mealAllowance} />
+              <Row label="Subsídio de transporte" value={payslip.gross.transportAllowance} />
+            </>
           )}
+
           <div className="my-2 h-px bg-border" />
-          <Row label="Segurança Social" value={-payslip.deductions.socialSecurity} />
-          <Row label="IRS" value={-payslip.deductions.irs} />
+          <Row label="Rendimento Bruto Total" value={payslip.gross.totalGross} />
+          <Row label="Valor Tributável Sujeito a Descontos" value={payslip.gross.totalTaxable} />
+
           <div className="my-2 h-px bg-border" />
-          <Row label="Valor líquido a receber" value={payslip.netPay} bold />
-          {!payslip.gross.weekendDeclared && payslip.gross.weekendIncome > 0 && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              O fim de semana não entra na Segurança Social nem no IRS — isto é opcional e pode ser mudado em{' '}
-              <a href="/configuracoes" className="underline">
-                Configurações
-              </a>
-              .
-            </p>
+          <Row
+            label={`Segurança Social (${typedSettings.social_security_rate || 11}%)`}
+            value={-payslip.deductions.socialSecurity}
+          />
+          <Row label="Retenção na Fonte de IRS" value={-payslip.deductions.irs} />
+
+          <div className="my-2 h-px bg-border" />
+          <Row label="Valor Líquido a Receber" value={payslip.netPay} bold />
+
+          {isEffective && (
+            <div className="mt-3 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground flex justify-between items-center">
+              <span>
+                Queres saber quanto a empresa te estaria a pagar com base no salário legal de 2.000€?
+              </span>
+              <Link href="/perdas" className="font-semibold text-primary underline ml-2 whitespace-nowrap">
+                Ver Comparador de Perdas →
+              </Link>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -328,7 +416,7 @@ export default async function DashboardPage({
 
 function Row({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
   return (
-    <div className={`flex justify-between ${bold ? 'text-base font-semibold' : ''}`}>
+    <div className={`flex justify-between ${bold ? 'text-base font-semibold text-foreground' : ''}`}>
       <span>{label}</span>
       <span>{euro(value)}</span>
     </div>
