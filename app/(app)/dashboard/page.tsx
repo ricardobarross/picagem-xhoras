@@ -400,7 +400,14 @@ export default async function DashboardPage({
 
           <div className="my-2 h-px bg-border" />
           <Row label="Rendimento Bruto Total" value={payslip.gross.totalGross} />
-          <Row label="Valor Tributável Sujeito a Descontos" value={payslip.gross.totalTaxable} />
+          {isEffective ? (
+            <>
+              <Row label="Base Sujeita a Segurança Social (só o Salário Base)" value={payslip.gross.ssTaxableBase} />
+              <Row label="Base Sujeita a IRS" value={payslip.gross.totalTaxable} />
+            </>
+          ) : (
+            <Row label="Valor Tributável Sujeito a Descontos" value={payslip.gross.totalTaxable} />
+          )}
 
           <div className="my-2 h-px bg-border" />
           <Row

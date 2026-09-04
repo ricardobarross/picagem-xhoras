@@ -124,6 +124,12 @@ const bracketSettings = baseSettings({ irs_calculation_type: 'bracket' });
 const irsMensal = calculateIrs(1000, bracketSettings, officialAnnualBrackets);
 check('IRS mensal sobre 1.000€ usando escalões ANUAIS (anualizado ×14, não aplicado direto)', irsMensal, 143.48);
 
+console.log('\n--- Segurança Social no regime efetivo incide só sobre o salário base ---');
+const ssSettings = baseSettings({ base_salary: 1500, fixed_bonus: 500, social_security_rate: 11 });
+const ssPayslip = calculatePayslip({ entries: [], settings: ssSettings });
+check('Base sujeita a SS é só o salário base (1.500€), não 1.500€+500€ de prémio', ssPayslip.gross.ssTaxableBase, 1500);
+check('SS descontada é 11% de 1.500€ (165€), não de 2.000€ (220€)', ssPayslip.deductions.socialSecurity, 165);
+
 console.log('\n--- Privacidade: conta nova (sem configuração) não herda os valores de outra conta ---');
 const unconfiguredSettings = baseSettings({
   base_salary: 0,

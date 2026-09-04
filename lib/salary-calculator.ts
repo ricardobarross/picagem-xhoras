@@ -34,9 +34,17 @@ export interface GrossBreakdown {
   fromHolidayHours: number;
   mealAllowance: number;
   transportAllowance: number;
-  totalTaxable: number; // entra para a base de IRS/SS ("valor declarado")
+  totalTaxable: number; // entra para a base de IRS ("valor declarado")
   totalNonTaxable: number; // isento / não declarado (recebido sem descontos)
   totalGross: number; // taxable + nonTaxable — o que a pessoa recebe no total
+  // Base de incidência da Segurança Social. No regime efetivo é só o
+  // salário base (Ricardo, 04/09/2026: "o cálculo da segurança social no
+  // efetivo é só referente ao salário base, o resto não entra") — prémio,
+  // horas extras, refeições extras e subsídios de férias/Natal não entram
+  // nesta base, ao contrário do totalTaxable (que continua a ser a base
+  // usada para o IRS). No regime horista mantém-se igual ao totalTaxable,
+  // como sempre foi.
+  ssTaxableBase: number;
   weekendIncome: number; // fromSaturdayHours + fromSundayHours, para referência no dashboard
   weekendDeclared: boolean; // eco de settings.declare_weekend_income, para a UI
 
@@ -167,6 +175,7 @@ export function calculateGrossBreakdown(
       totalTaxable,
       totalNonTaxable,
       totalGross,
+      ssTaxableBase: baseSalary,
       weekendIncome: (hours.saturday + hours.sunday) * overtimeRate,
       weekendDeclared: true,
       baseSalary,
@@ -216,6 +225,7 @@ export function calculateGrossBreakdown(
     totalTaxable,
     totalNonTaxable,
     totalGross: totalTaxable + totalNonTaxable,
+    ssTaxableBase: totalTaxable,
     weekendIncome,
     weekendDeclared,
     baseSalary: 0,
@@ -276,7 +286,7 @@ export function calculateDeductions(
   brackets: IrsTaxBracket[] = [],
 ): DeductionsBreakdown {
   const ssRate = settings.social_security_rate || 11;
-  const socialSecurity = gross.totalTaxable * (ssRate / 100);
+  const socialSecurity = gross.ssTaxableBase * (ssRate / 100);
   const irsBase = Math.max(0, gross.totalTaxable - socialSecurity); // SS dedutível antes do IRS
   const irs = calculateIrs(irsBase, settings, brackets);
 
