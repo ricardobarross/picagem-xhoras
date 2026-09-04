@@ -124,6 +124,32 @@ const bracketSettings = baseSettings({ irs_calculation_type: 'bracket' });
 const irsMensal = calculateIrs(1000, bracketSettings, officialAnnualBrackets);
 check('IRS mensal sobre 1.000€ usando escalões ANUAIS (anualizado ×14, não aplicado direto)', irsMensal, 143.48);
 
+console.log('\n--- Perda líquida na auditoria de perdas (Ricardo, 04/09/2026: os descontos sobre os valores em falta têm de entrar na conta) ---');
+const netLossAudit = auditContractLosses({
+  settings: effectiveSettings,
+  overtimeHours: 10,
+  extraMealsCount: 4,
+  brackets: officialAnnualBrackets,
+});
+// Subsídio em falta (500€ bruto): desconta SS (11% = 55€) + IRS sobre os
+// restantes 445€, anualizados ×14 (6.230€/ano) → escalão dos 12,5% da tabela
+// de teste → IRS mensal ≈ 55,63€. Líquido = 500 - 55 - 55,63 = 389,37€.
+checkTrue('Subsídio de férias em falta: perda líquida < perda bruta', netLossAudit.subsidies.holidaySubsidyLossNet < netLossAudit.subsidies.holidaySubsidyLoss);
+check('Subsídio de férias em falta: perda líquida (500€ bruto - SS - IRS)', netLossAudit.subsidies.holidaySubsidyLossNet, 389.37);
+check('Subsídio de Natal em falta: mesma perda líquida', netLossAudit.subsidies.christmasSubsidyLossNet, 389.37);
+check('Total anual líquido nos subsídios (2× 389,37€)', netLossAudit.subsidies.totalAnnualSubsidiesLossNet, 778.74);
+
+// Horas extras em falta (35,80€ bruto): só desconta IRS (sem SS, mesma regra
+// de ssTaxableBase), por isso a perda líquida fica mais perto da bruta do
+// que a dos subsídios.
+checkTrue('Horas extras em falta: perda líquida < perda bruta', netLossAudit.overtime.directOvertimeLossNet < netLossAudit.overtime.directOvertimeLoss);
+checkTrue(
+  'Horas extras em falta: perda líquida não descontou SS (fica bem mais próxima da bruta do que a dos subsídios)',
+  netLossAudit.overtime.directOvertimeLoss - netLossAudit.overtime.directOvertimeLossNet < netLossAudit.subsidies.holidaySubsidyLoss - netLossAudit.subsidies.holidaySubsidyLossNet,
+);
+
+checkTrue('Prejuízo total anual líquido < prejuízo total anual bruto', netLossAudit.totalAnnualLossProjectedNet < netLossAudit.totalAnnualLossProjected);
+
 console.log('\n--- Segurança Social no regime efetivo incide só sobre o salário base ---');
 const ssSettings = baseSettings({ base_salary: 1500, fixed_bonus: 500, social_security_rate: 11 });
 const ssPayslip = calculatePayslip({ entries: [], settings: ssSettings });

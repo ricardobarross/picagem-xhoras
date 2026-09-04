@@ -17,7 +17,7 @@ import {
   TrendingDown,
   Upload,
 } from 'lucide-react';
-import type { UserSettings } from '@/types/database.types';
+import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { auditContractLosses } from '@/lib/loss-calculator';
@@ -35,7 +35,13 @@ function monthName(month: number): string {
   return MONTH_NAMES_PT[month - 1] ?? 'mês configurado';
 }
 
-export function LossAuditClient({ initialSettings }: { initialSettings: UserSettings }) {
+export function LossAuditClient({
+  initialSettings,
+  brackets = [],
+}: {
+  initialSettings: UserSettings;
+  brackets?: IrsTaxBracket[];
+}) {
   // Simuladores interativos
   const [simulatedOtHours, setSimulatedOtHours] = useState(15);
   const [simulatedExtraMeals, setSimulatedExtraMeals] = useState(6);
@@ -46,6 +52,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
     settings: initialSettings,
     overtimeHours: simulatedOtHours,
     extraMealsCount: simulatedExtraMeals,
+    brackets,
   });
 
   const holidayMonthName = monthName(initialSettings.holiday_subsidy_month);
@@ -100,11 +107,13 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-extrabold text-red-600">
-              -{euro(audit.subsidies.totalAnnualSubsidiesLoss)}
+              -{euro(audit.subsidies.totalAnnualSubsidiesLossNet)}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              -{euro(audit.subsidies.christmasSubsidyLoss)} no Subsídio de Natal ({christmasMonthName}) e -
-              {euro(audit.subsidies.holidaySubsidyLoss)} no Subsídio de Férias ({holidayMonthName}).
+              Valor líquido estimado (já descontados SS + IRS). Bruto exigido pela lei:{' '}
+              {euro(audit.subsidies.totalAnnualSubsidiesLoss)} (-{euro(audit.subsidies.christmasSubsidyLoss)} no
+              Subsídio de Natal em {christmasMonthName} e -{euro(audit.subsidies.holidaySubsidyLoss)} no Subsídio de
+              Férias em {holidayMonthName}).
             </p>
           </CardContent>
         </Card>
@@ -212,7 +221,12 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.subsidies.paidHolidaySubsidy)}</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.subsidies.legalHolidaySubsidy)}</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-{euro(audit.subsidies.holidaySubsidyLoss)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                    -{euro(audit.subsidies.holidaySubsidyLossNet)}
+                    <span className="block text-[10px] font-normal text-muted-foreground">
+                      bruto: {euro(audit.subsidies.holidaySubsidyLoss)}
+                    </span>
+                  </td>
                 </tr>
 
                 <tr>
@@ -224,7 +238,12 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.subsidies.paidChristmasSubsidy)}</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.subsidies.legalChristmasSubsidy)}</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">-{euro(audit.subsidies.christmasSubsidyLoss)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                    -{euro(audit.subsidies.christmasSubsidyLossNet)}
+                    <span className="block text-[10px] font-normal text-muted-foreground">
+                      bruto: {euro(audit.subsidies.christmasSubsidyLoss)}
+                    </span>
+                  </td>
                 </tr>
 
                 <tr>
@@ -354,22 +373,24 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                 Perda Média Mensal Estimada
               </p>
               <p className="mt-1 text-2xl font-bold text-red-600">
-                -{euro(audit.totalMonthlyLossSimulated)} / mês
+                -{euro(audit.totalMonthlyLossSimulatedNet)} / mês
               </p>
               <p className="text-[11px] text-muted-foreground">
-                {euro(audit.overtime.directOvertimeLoss)} em horas + {euro(audit.meals.mealLoss)} em refeições
+                {euro(audit.overtime.directOvertimeLossNet)} em horas (líquido) + {euro(audit.meals.mealLoss)} em
+                refeições
               </p>
             </div>
 
             <div className="p-2 border-y sm:border-y-0 sm:border-x border-border">
               <p className="text-xs uppercase font-medium text-muted-foreground">
-                Perda Anual Garantida (Subsídios)
+                Perda Anual Garantida (Subsídios, líquido)
               </p>
               <p className="mt-1 text-2xl font-bold text-red-600">
-                -{euro(audit.subsidies.totalAnnualSubsidiesLoss)}
+                -{euro(audit.subsidies.totalAnnualSubsidiesLossNet)}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                {euro(audit.subsidies.holidaySubsidyLoss)} em {holidayMonthName} + {euro(audit.subsidies.christmasSubsidyLoss)} em {christmasMonthName}
+                {euro(audit.subsidies.holidaySubsidyLossNet)} em {holidayMonthName} + {euro(audit.subsidies.christmasSubsidyLossNet)} em{' '}
+                {christmasMonthName} (bruto: {euro(audit.subsidies.totalAnnualSubsidiesLoss)})
               </p>
             </div>
 
@@ -378,10 +399,10 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
                 Prejuízo Total Projetado ao Ano
               </p>
               <p className="mt-1 text-3xl font-extrabold text-red-600">
-                -{euro(audit.totalAnnualLossProjected)}
+                -{euro(audit.totalAnnualLossProjectedNet)}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Dinheiro que ficou no bolso do patrão
+                Dinheiro líquido que ficou no bolso do patrão (bruto exigido pela lei: {euro(audit.totalAnnualLossProjected)})
               </p>
             </div>
           </div>
@@ -469,7 +490,7 @@ export function LossAuditClient({ initialSettings }: { initialSettings: UserSett
             <p className="mt-1">
               O montante dos subsídios de férias e de Natal deve corresponder à retribuição que o trabalhador
               auferiria se estivesse em trabalho efetivo, abrangendo não só o base mas também prémios regulares.
-              A empresa subtrai {euro(audit.subsidies.totalAnnualSubsidiesLoss)} anuais ao limitar o subsídio a {euro(audit.declaredBaseSalary)}.
+              A empresa subtrai o equivalente a {euro(audit.subsidies.totalAnnualSubsidiesLossNet)} líquidos por ano (bruto: {euro(audit.subsidies.totalAnnualSubsidiesLoss)}) ao limitar o subsídio a {euro(audit.declaredBaseSalary)}.
             </p>
           </div>
 

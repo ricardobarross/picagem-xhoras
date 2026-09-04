@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { LossAuditClient } from '@/components/audit/LossAuditClient';
-import type { UserSettings } from '@/types/database.types';
+import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
 
 export const metadata = {
   title: 'Auditoria de Perdas Contratuais | Picagem XHoras',
@@ -39,9 +39,17 @@ export default async function PerdasPage() {
     );
   }
 
+  const { data: brackets } = await supabase
+    .from('irs_tax_brackets')
+    .select('*')
+    .eq('user_settings_id', settings.id);
+
   return (
     <div className="py-6">
-      <LossAuditClient initialSettings={settings as UserSettings} />
+      <LossAuditClient
+        initialSettings={settings as UserSettings}
+        brackets={(brackets ?? []) as IrsTaxBracket[]}
+      />
     </div>
   );
 }

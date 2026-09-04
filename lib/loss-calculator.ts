@@ -3,7 +3,8 @@
 // comparando as condições praticadas pela entidade patronal com o regime
 // legal obrigatório estabelecido pelo Código do Trabalho (Lei n.º 7/2009).
 
-import type { UserSettings } from '@/types/database.types';
+import type { UserSettings, IrsTaxBracket } from '@/types/database.types';
+import { calculateIrs } from './salary-calculator';
 
 export interface OvertimeLossBreakdown {
   hoursCount: number;
@@ -12,7 +13,11 @@ export interface OvertimeLossBreakdown {
   legalDueWeekdaySubsequent: number; // horas * 15.87€
   legalDueWeekendHoliday: number; // horas * 17.31€
   averageLegalDue: number; // Média ponderada legal
-  directOvertimeLoss: number; // Diferença a desfavor do trabalhador
+  directOvertimeLoss: number; // Diferença a desfavor do trabalhador (bruto)
+  // Perda líquida: horas extras/prémio não entram na base de SS (mesma regra
+  // do motor principal — ver ssTaxableBase em salary-calculator.ts), por
+  // isso aqui só se desconta o IRS estimado, não a SS.
+  directOvertimeLossNet: number;
 }
 
 export interface MealAllowanceLossBreakdown {
@@ -28,11 +33,18 @@ export interface MealAllowanceLossBreakdown {
 export interface SubsidiesLossBreakdown {
   paidHolidaySubsidy: number; // 1500€
   legalHolidaySubsidy: number; // 2000€
-  holidaySubsidyLoss: number; // 500€
+  holidaySubsidyLoss: number; // 500€ (bruto, valor exigido pela lei)
   paidChristmasSubsidy: number; // 1500€
   legalChristmasSubsidy: number; // 2000€
-  christmasSubsidyLoss: number; // 500€
-  totalAnnualSubsidiesLoss: number; // 1000€
+  christmasSubsidyLoss: number; // 500€ (bruto)
+  totalAnnualSubsidiesLoss: number; // 1000€ (bruto)
+  // Perda líquida: o que ficaria efetivamente no bolso depois de SS + IRS,
+  // já que os subsídios de férias/Natal, ao contrário do prémio/horas
+  // extras, entram sempre na base de incidência de SS quando pagos
+  // corretamente (ver netOfSubsidyDeductions, mais abaixo).
+  holidaySubsidyLossNet: number;
+  christmasSubsidyLossNet: number;
+  totalAnnualSubsidiesLossNet: number;
 }
 
 export interface SeveranceImpact {
@@ -66,9 +78,13 @@ export interface ContractLossAudit {
   // Impacto em indemnização futura
   severance: SeveranceImpact;
 
-  // Totais
+  // Totais (valor bruto exigido pela lei — útil para reclamação/ação legal)
   totalMonthlyLossSimulated: number;
   totalAnnualLossProjected: number;
+  // Totais líquidos — o que realmente ficaria a mais no teu bolso, já
+  // descontados os impostos que incidiriam sobre esses valores em falta.
+  totalMonthlyLossSimulatedNet: number;
+  totalAnnualLossProjectedNet: number;
 }
 
 /**
@@ -86,8 +102,34 @@ export function auditContractLosses(params: {
   settings: UserSettings;
   overtimeHours?: number;
   extraMealsCount?: number;
+  brackets?: IrsTaxBracket[];
 }): ContractLossAudit {
-  const { settings, overtimeHours = 10, extraMealsCount = 4 } = params;
+  const { settings, overtimeHours = 10, extraMealsCount = 4, brackets = [] } = params;
+
+  const ssRate = settings.social_security_rate || 11;
+
+  // Estima o líquido de uma verba de subsídio de férias/Natal em falta:
+  // desconta SS + IRS, tal como aconteceria se o subsídio fosse pago por
+  // inteiro e declarado oficialmente (Art. 264º CT). Aproximação: aplica a
+  // tabela de retenção mensal ao valor isolado do subsídio, na falta da
+  // tabela autónoma oficial de subsídios de férias/Natal — a confirmar/
+  // ajustar com os recibos reais quando partilhados.
+  const netOfSubsidyDeductions = (grossLoss: number): number => {
+    if (grossLoss <= 0) return 0;
+    const ss = grossLoss * (ssRate / 100);
+    const irsBase = Math.max(0, grossLoss - ss);
+    const irs = calculateIrs(irsBase, settings, brackets);
+    return Math.max(0, Number((grossLoss - ss - irs).toFixed(2)));
+  };
+
+  // Estima o líquido de horas extras em falta: só desconta IRS (sem SS),
+  // pois no regime efetivo as horas extras/prémio não entram na base de
+  // incidência de SS (mesma regra usada em ssTaxableBase, salary-calculator.ts).
+  const netOfOvertimeDeductions = (grossLoss: number): number => {
+    if (grossLoss <= 0) return 0;
+    const irs = calculateIrs(grossLoss, settings, brackets);
+    return Math.max(0, Number((grossLoss - irs).toFixed(2)));
+  };
 
   // Sem fallback para um valor "de exemplo": uma conta ainda não
   // configurada deve ver 0€ em toda a auditoria, nunca os números de
@@ -121,6 +163,9 @@ export function auditContractLosses(params: {
   const legalChristmasSubsidy = agreedRealSalary;
   const christmasSubsidyLoss = legalChristmasSubsidy - paidChristmasSubsidy;
 
+  const holidaySubsidyLossNet = netOfSubsidyDeductions(holidaySubsidyLoss);
+  const christmasSubsidyLossNet = netOfSubsidyDeductions(christmasSubsidyLoss);
+
   const subsidies: SubsidiesLossBreakdown = {
     paidHolidaySubsidy,
     legalHolidaySubsidy,
@@ -129,6 +174,9 @@ export function auditContractLosses(params: {
     legalChristmasSubsidy,
     christmasSubsidyLoss,
     totalAnnualSubsidiesLoss: holidaySubsidyLoss + christmasSubsidyLoss,
+    holidaySubsidyLossNet,
+    christmasSubsidyLossNet,
+    totalAnnualSubsidiesLossNet: Number((holidaySubsidyLossNet + christmasSubsidyLossNet).toFixed(2)),
   };
 
   // 2. Perda em Horas Extras
@@ -138,6 +186,7 @@ export function auditContractLosses(params: {
   const legalDueWeekendHoliday = Number((overtimeHours * legalWeekendRate).toFixed(2));
   const averageLegalDue = Number((overtimeHours * averageLegalOvertimeRate).toFixed(2));
   const directOvertimeLoss = Math.max(0, Number((averageLegalDue - paidByEmployer).toFixed(2)));
+  const directOvertimeLossNet = netOfOvertimeDeductions(directOvertimeLoss);
 
   const overtime: OvertimeLossBreakdown = {
     hoursCount: overtimeHours,
@@ -147,6 +196,7 @@ export function auditContractLosses(params: {
     legalDueWeekendHoliday,
     averageLegalDue,
     directOvertimeLoss,
+    directOvertimeLossNet,
   };
 
   // 3. Perda em Refeições Extras Camufladas no Prémio
@@ -190,11 +240,18 @@ export function auditContractLosses(params: {
     lossPerYearOfSeniority,
   };
 
-  // Totais
+  // Totais (bruto)
   const totalMonthlyLossSimulated = Number((directOvertimeLoss + mealLoss).toFixed(2));
   // Anual = 1000€ dos subsídios + 11 meses de horas extras e refeições estimadas
   const totalAnnualLossProjected = Number(
     (subsidies.totalAnnualSubsidiesLoss + totalMonthlyLossSimulated * 11).toFixed(2),
+  );
+
+  // Totais líquidos (dinheiro real perdido, já descontados os impostos que
+  // incidiriam sobre os valores em falta caso fossem pagos corretamente)
+  const totalMonthlyLossSimulatedNet = Number((directOvertimeLossNet + mealLoss).toFixed(2));
+  const totalAnnualLossProjectedNet = Number(
+    (subsidies.totalAnnualSubsidiesLossNet + totalMonthlyLossSimulatedNet * 11).toFixed(2),
   );
 
   return {
@@ -213,5 +270,7 @@ export function auditContractLosses(params: {
     severance,
     totalMonthlyLossSimulated,
     totalAnnualLossProjected,
+    totalMonthlyLossSimulatedNet,
+    totalAnnualLossProjectedNet,
   };
 }
