@@ -118,17 +118,22 @@ export function ContractSettingsForm({
     setError(null);
     setSaved(false);
 
-    const base = Number(baseSalary.replace(',', '.')) || 0;
-    const bonus = Number(fixedBonus.replace(',', '.')) || 0;
-    const agreed = Number(agreedTotalSalary.replace(',', '.')) || (base + bonus);
-    const otRate = Number(overtimeFixedRate.replace(',', '.')) || 0;
-    const extraMeal = Number(extraMealValue.replace(',', '.')) || 0;
+    const isEffective = contractRegime === 'effective';
+
+    // Em regime Horista esta estrutura (base+prémio vs. ordenado real) não
+    // se aplica — grava sempre 0 para não deixar valores de exemplo/de
+    // outra conta por engano na linha desta conta (ver migração 0011).
+    const base = isEffective ? Number(baseSalary.replace(',', '.')) || 0 : 0;
+    const bonus = isEffective ? Number(fixedBonus.replace(',', '.')) || 0 : 0;
+    const agreed = isEffective ? Number(agreedTotalSalary.replace(',', '.')) || (base + bonus) : 0;
+    const otRate = isEffective ? Number(overtimeFixedRate.replace(',', '.')) || 0 : 0;
+    const extraMeal = isEffective ? Number(extraMealValue.replace(',', '.')) || 0 : 0;
     const deps = parseInt(dependentsCount, 10) || 0;
     const mealVal = Number(mealDailyValue.replace(',', '.')) || 0;
     const transportVal = Number(transportValue.replace(',', '.')) || 0;
     const cutoff = parseInt(cutoffDay, 10) || 20;
 
-    if (base <= 0) return setError('O salário base tem de ser maior que 0.');
+    if (isEffective && base <= 0) return setError('O salário base tem de ser maior que 0.');
     if (cutoff < 1 || cutoff > 28) return setError('O dia de fecho tem de estar entre 1 e 28.');
 
     setSaving(true);
@@ -228,100 +233,106 @@ export function ContractSettingsForm({
             </div>
           </div>
 
-          {/* 2. Estrutura Salarial Real da Tua Empresa */}
-          <div>
-            <h3 className="mb-3 text-sm font-semibold text-foreground">
-              Estrutura Remuneratória (Condições Acordadas)
-            </h3>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {/* 2. e 3. Estrutura Salarial Real e Horas Extras com valor fixo —
+              só fazem sentido em Contrato Efetivo (base+prémio vs. ordenado
+              real). Em regime Horista ficam ocultos, para não ficarem
+              valores de outra conta gravados por engano (ver migração 0011). */}
+          {contractRegime === 'effective' && (
+            <>
               <div>
-                <label className="text-xs font-medium text-muted-foreground">
-                  Salário Base no Recibo (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={baseSalary}
-                  onChange={(e) => setBaseSalary(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="0,00"
-                />
-                <span className="text-[11px] text-muted-foreground">Declarado na folha oficial</span>
+                <h3 className="mb-3 text-sm font-semibold text-foreground">
+                  Estrutura Remuneratória (Condições Acordadas)
+                </h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Salário Base no Recibo (€)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={baseSalary}
+                      onChange={(e) => setBaseSalary(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder="0,00"
+                    />
+                    <span className="text-[11px] text-muted-foreground">Declarado na folha oficial</span>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Prémio Fixo Mensal (€)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={fixedBonus}
+                      onChange={(e) => setFixedBonus(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder="0,00"
+                    />
+                    <span className="text-[11px] text-muted-foreground">Gratificação regular</span>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-primary">
+                      Ordenado Real Acordado (€)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={agreedTotalSalary}
+                      onChange={(e) => setAgreedTotalSalary(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-primary/50 bg-background px-3 py-2 text-sm font-semibold"
+                      placeholder="0,00"
+                    />
+                    <span className="text-[11px] text-muted-foreground">Base p/ auditoria de perdas</span>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">
-                  Prémio Fixo Mensal (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={fixedBonus}
-                  onChange={(e) => setFixedBonus(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="0,00"
-                />
-                <span className="text-[11px] text-muted-foreground">Gratificação regular</span>
-              </div>
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <h3 className="mb-3 text-sm font-semibold text-foreground">
+                  Trabalho Suplementar e Refeições Extras
+                </h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Valor Pago por Hora Extra (€/h)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={overtimeFixedRate}
+                      onChange={(e) => setOvertimeFixedRate(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder="0,00"
+                    />
+                    <span className="text-[11px] text-muted-foreground">
+                      Valor combinado com o empregador para cada hora extra
+                    </span>
+                  </div>
 
-              <div>
-                <label className="text-xs font-medium text-primary">
-                  Ordenado Real Acordado (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={agreedTotalSalary}
-                  onChange={(e) => setAgreedTotalSalary(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-primary/50 bg-background px-3 py-2 text-sm font-semibold"
-                  placeholder="0,00"
-                />
-                <span className="text-[11px] text-muted-foreground">Base p/ auditoria de perdas</span>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Valor por Refeição Extra (€)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={extraMealValue}
+                      onChange={(e) => setExtraMealValue(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      placeholder="0,00"
+                    />
+                    <span className="text-[11px] text-muted-foreground">
+                      Refeição extra em dias de horas extras
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-
-          {/* 3. Horas Extras e Refeições Extras */}
-          <div className="rounded-lg border bg-muted/20 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-foreground">
-              Trabalho Suplementar e Refeições Extras
-            </h3>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">
-                  Valor Pago por Hora Extra (€/h)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={overtimeFixedRate}
-                  onChange={(e) => setOvertimeFixedRate(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="0,00"
-                />
-                <span className="text-[11px] text-muted-foreground">
-                  Valor combinado com o empregador para cada hora extra
-                </span>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">
-                  Valor por Refeição Extra (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={extraMealValue}
-                  onChange={(e) => setExtraMealValue(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="0,00"
-                />
-                <span className="text-[11px] text-muted-foreground">
-                  Refeição extra em dias de horas extras
-                </span>
-              </div>
-            </div>
-          </div>
+            </>
+          )}
 
           {/* 4. Perguntas de Admissão / Perfil Fiscal em Portugal (Art. 99º CIRS) */}
           <div>
@@ -529,9 +540,11 @@ export function ContractSettingsForm({
           {saved && (
             <div className="flex items-center justify-between rounded-md bg-green-500/10 p-3 text-sm text-green-600">
               <span>Configurações contratuais gravadas com sucesso!</span>
-              <Link href="/perdas" className="font-semibold underline">
-                Ver Auditoria de Perdas →
-              </Link>
+              {contractRegime === 'effective' && (
+                <Link href="/perdas" className="font-semibold underline">
+                  Ver Auditoria de Perdas →
+                </Link>
+              )}
             </div>
           )}
 
@@ -540,12 +553,14 @@ export function ContractSettingsForm({
               {saving ? 'A guardar...' : 'Guardar Configurações'}
             </Button>
 
-            <Link
-              href="/perdas"
-              className="inline-flex items-center text-sm font-semibold text-primary hover:underline"
-            >
-              Consultar Auditoria de Direitos Sonegados →
-            </Link>
+            {contractRegime === 'effective' && (
+              <Link
+                href="/perdas"
+                className="inline-flex items-center text-sm font-semibold text-primary hover:underline"
+              >
+                Consultar Auditoria de Direitos Sonegados →
+              </Link>
+            )}
           </div>
         </form>
       </CardContent>
