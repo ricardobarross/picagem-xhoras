@@ -20,6 +20,7 @@ Suporta dois regimes de trabalho: **Contrato Efetivo** (Trabalhador por Conta de
    7. `0007_backfill_contrato_efetivo_legacy.sql` — defensiva: só faz algo se o projeto tiver colunas antigas de uma versão ad-hoc do Contrato Efetivo aplicada fora deste histórico (`payment_type`, `base_monthly_salary`, ...). Num projeto novo é um no-op inofensivo.
    8. `0008_generic_effective_defaults.sql` — zera os valores por defeito (`base_salary`, `fixed_bonus`, `agreed_total_salary`, `overtime_fixed_rate`, `extra_meal_value`) para novas contas. Só afeta `insert`s futuros — não altera contas já configuradas.
    9. `0009_absence_entries.sql` — adiciona `entry_type` a `time_entries` (`work` | `unjustified_absence` | `sick_leave` | `justified_absence`), permitindo registar faltas injustificadas (por hora), baixa médica (por dia) e falta justificada no calendário do Ponto, com desconto automático no regime Efetivo.
+   10. `0010_subsidy_overrides_and_receipts.sql` — cria `subsidy_payment_overrides` (mês real em que o subsídio de Férias/Natal foi pedido/recebido, registo por ano — útil em empresas onde não é automático) e `payslip_receipts` (recibo real por mês, com PDF anexado no bucket de storage privado `receipts`).
    - Alternativa via CLI, que aplica todas as migrações pendentes pela ordem correta automaticamente: `npx supabase login`, `npx supabase link --project-ref <ref>`, `npx supabase db push`.
 4. (Opcional, para o login com Google) Em **Authentication → Providers → Google**, ativa o provider e configura o Client ID/Secret. Em **Authentication → URL Configuration**, garante que `http://localhost:3000/auth/callback` está nos Redirect URLs.
 
@@ -47,8 +48,9 @@ Abre [http://localhost:3000](http://localhost:3000) — deves ser redirecionado 
 3. Serás redirecionado para `/dashboard` — vai mostrar 0h/0€ porque ainda não há picagens nem configurações personalizadas (a conta já tem uma linha em `user_settings` com valores por defeito, criada automaticamente pelo trigger `handle_new_user`; para Contrato Efetivo os defeitos são 1.500€ base + 500€ prémio).
 4. Vai a **Configurações** (`/configuracoes`) e escolhe o regime (Efetivo ou Horista), preenche a estrutura salarial, o perfil fiscal e os subsídios. Tudo aqui é editável pela interface — não é preciso mexer diretamente na base de dados.
 5. Vai a **Picagem** (`/ponto`) e regista as horas trabalhadas por dia no calendário do mês. Clicando num dia também dá para marcar Falta Injustificada (em horas), Baixa Médica ou Falta Justificada (dia inteiro) em vez de horas trabalhadas — em regime Efetivo, faltas injustificadas e baixa descontam automaticamente ao Vencimento Base (e por isso também à base de SS/IRS), tal como acontece num recibo real; falta justificada fica só registada, sem desconto (Art. 255º CT). Cada alteração grava/atualiza uma linha em `time_entries` (podes confirmar na tab **Table Editor** do Supabase).
-6. Volta ao **Dashboard** — o resumo de horas e a simulação de recibo já refletem as picagens, calculados por `lib/salary-calculator.ts`. Dias úteis, sábados, domingos e feriados obrigatórios portugueses (calculados automaticamente em `lib/time-utils.ts`, incluindo os móveis — Sexta-feira Santa e Corpo de Deus) são discriminados separadamente.
-7. Em regime Efetivo, acede a **Auditoria de Perdas** (`/perdas`) para a comparação entre o que a empresa paga e o que a lei exige sobre o ordenado real acordado.
+6. Volta ao **Dashboard** — o resumo de horas e a **Simulação do Recibo de Vencimento** já refletem as picagens, calculados por `lib/salary-calculator.ts`. Em regime Efetivo, a simulação usa o mesmo layout Remunerações/Descontos (Descrição, Hora/Dia, Valor Unitário, Valor Total) do recibo real da empresa. Dias úteis, sábados, domingos e feriados obrigatórios portugueses (calculados automaticamente em `lib/time-utils.ts`, incluindo os móveis — Sexta-feira Santa e Corpo de Deus) são discriminados separadamente.
+7. Em regime Efetivo, acede a **Auditoria de Perdas** (`/perdas`) para a comparação entre o que a empresa paga e o que a lei exige sobre o ordenado real acordado — os valores de perda já vêm líquidos (descontando SS/IRS sobre o que faltou), com o valor bruto mostrado como referência secundária.
+8. Se na tua empresa o subsídio de Férias (ou o de Natal) não é automático e o mês varia de ano para ano, regista o mês real em **Configurações → Quando os Subsídios Foram Pedidos/Recebidos** (por ano). Em **Recibos** (`/recibos`) podes ainda anexar o PDF do recibo real de cada mês, registar os valores que lá constam, e comparar com o que a app calcula que devias receber — fica guardado para consultas futuras.
 
 ### Multi-utilizador e privacidade
 
@@ -75,7 +77,8 @@ Cada conta só vê os seus próprios dados — todas as tabelas (`profiles`, `us
 │   │   ├── dashboard/page.tsx                                ✅
 │   │   ├── ponto/page.tsx                                    ✅
 │   │   ├── configuracoes/page.tsx                            ✅
-│   │   └── perdas/page.tsx                                   ✅ Auditoria de Perdas (Contrato Efetivo)
+│   │   ├── perdas/page.tsx                                   ✅ Auditoria de Perdas (Contrato Efetivo)
+│   │   └── recibos/page.tsx                                   ✅ Anexar recibos reais + comparar com o esperado
 │   ├── auth/callback/route.ts                                ✅
 │   └── page.tsx                                              ✅ (redirect)
 ├── components/
@@ -83,8 +86,9 @@ Cada conta só vê os seus próprios dados — todas as tabelas (`profiles`, `us
 │   ├── auth/{LoginForm,SignupForm,SignOutButton}.tsx         ✅
 │   ├── time-tracker/PontoClient.tsx                          ✅
 │   ├── dashboard/DashboardCharts.tsx                         ✅
-│   ├── settings/{ContractSettingsForm,RatesForm,DescontosForm}.tsx  ✅
-│   └── audit/LossAuditClient.tsx                             ✅
+│   ├── settings/{ContractSettingsForm,RatesForm,DescontosForm,SubsidyOverridesForm}.tsx  ✅
+│   ├── audit/LossAuditClient.tsx                             ✅
+│   └── receipts/RecibosClient.tsx                             ✅
 ├── lib/
 │   ├── supabase/{client,server,middleware}.ts                ✅
 │   ├── salary-calculator.ts                                  ✅
@@ -93,7 +97,7 @@ Cada conta só vê os seus próprios dados — todas as tabelas (`profiles`, `us
 ├── types/database.types.ts                                   ✅
 ├── scripts/verify-calculations.ts                             ✅ script de verificação (npm run verify)
 ├── proxy.ts (substitui middleware.ts a partir do Next 16)    ✅
-└── supabase/migrations/0001..0009_*.sql                       ✅
+└── supabase/migrations/0001..0010_*.sql                       ✅
 ```
 
 `registos/page.tsx` e `relatorios/page.tsx` (histórico tabular editável e exportação PDF/CSV) continuam por fazer — não fazem parte do âmbito desta versão.

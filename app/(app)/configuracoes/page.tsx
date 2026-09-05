@@ -3,7 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { ContractSettingsForm } from '@/components/settings/ContractSettingsForm';
 import { RatesForm } from '@/components/settings/RatesForm';
 import { DescontosForm } from '@/components/settings/DescontosForm';
-import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
+import { SubsidyOverridesForm } from '@/components/settings/SubsidyOverridesForm';
+import type { IrsTaxBracket, SubsidyPaymentOverride, UserSettings } from '@/types/database.types';
 
 export default async function ConfiguracoesPage() {
   const supabase = await createClient();
@@ -38,6 +39,11 @@ export default async function ConfiguracoesPage() {
     .eq('user_settings_id', typedSettings.id)
     .order('min_income', { ascending: true });
 
+  const { data: subsidyOverrides } = await supabase
+    .from('subsidy_payment_overrides')
+    .select('*')
+    .eq('user_id', user.id);
+
   const isEffective = typedSettings.contract_regime === 'effective';
 
   return (
@@ -55,6 +61,16 @@ export default async function ConfiguracoesPage() {
       {/* Se o trabalhador estiver em regime horista, mostra o formulário de tarifas horárias */}
       {!isEffective && (
         <RatesForm userId={user.id} initialSettings={typedSettings} />
+      )}
+
+      {/* Quando os subsídios de férias/Natal foram pedidos/recebidos, ano a ano
+          (só relevante em Contrato Efetivo) */}
+      {isEffective && (
+        <SubsidyOverridesForm
+          userId={user.id}
+          initialSettings={typedSettings}
+          initialOverrides={(subsidyOverrides ?? []) as SubsidyPaymentOverride[]}
+        />
       )}
 
       {/* Formulário de Segurança Social e Escalões de IRS */}

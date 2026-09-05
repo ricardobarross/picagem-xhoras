@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/ponto', label: 'Picagem' },
   { href: '/perdas', label: 'Auditoria de Perdas', highlight: true },
+  { href: '/recibos', label: 'Recibos' },
   { href: '/configuracoes', label: 'Configurações' },
 ];
 

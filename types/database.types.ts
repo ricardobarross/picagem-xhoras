@@ -142,6 +142,49 @@ export type TimeEntry = {
   updated_at: string;
 };
 
+export type SubsidyType = 'holiday' | 'christmas';
+
+// Substituição, só para um ano específico, do mês em que um subsídio foi
+// efetivamente pedido/recebido — para empresas onde não é automático nem
+// sempre no mesmo mês (ver supabase/migrations/0010_*.sql). Sem registo
+// para o ano em curso, usa-se o mês padrão em UserSettings.
+export type SubsidyPaymentOverride = {
+  id: string;
+  user_id: string;
+  reference_year: number;
+  subsidy_type: SubsidyType;
+  received_month: number; // 1 a 12
+  received_day: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// Um recibo de vencimento real, por mês, para comparar com o que a app
+// calcula que devia ser recebido. Todos os valores são opcionais — só se
+// preenche o que se sabe/quer comparar. file_path aponta para o PDF no
+// bucket de storage 'receipts' (null se não foi anexado ficheiro).
+export type PayslipReceipt = {
+  id: string;
+  user_id: string;
+  reference_year: number;
+  reference_month: number; // 1 a 12
+  received_base_salary: number | null;
+  received_bonus: number | null;
+  received_overtime: number | null;
+  received_meal_allowance: number | null;
+  received_holiday_subsidy: number | null;
+  received_christmas_subsidy: number | null;
+  received_social_security: number | null;
+  received_irs: number | null;
+  received_net_pay: number | null;
+  file_path: string | null;
+  file_name: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 // Estrutura mínima esperada pelo @supabase/postgrest-js (GenericSchema):
 // cada tabela precisa de Row/Insert/Update/Relationships, e o schema de
 // Tables/Views/Functions. Em produção, substituir tudo isto por
@@ -186,6 +229,23 @@ export type Database = {
         Row: IrsOfficialBracket;
         Insert: Partial<IrsOfficialBracket> & { fiscal_year: number; min_income: number; rate: number; deduction: number };
         Update: Partial<IrsOfficialBracket>;
+        Relationships: [];
+      };
+      subsidy_payment_overrides: {
+        Row: SubsidyPaymentOverride;
+        Insert: Partial<SubsidyPaymentOverride> & {
+          user_id: string;
+          reference_year: number;
+          subsidy_type: SubsidyType;
+          received_month: number;
+        };
+        Update: Partial<SubsidyPaymentOverride>;
+        Relationships: [];
+      };
+      payslip_receipts: {
+        Row: PayslipReceipt;
+        Insert: Partial<PayslipReceipt> & { user_id: string; reference_year: number; reference_month: number };
+        Update: Partial<PayslipReceipt>;
         Relationships: [];
       };
     };

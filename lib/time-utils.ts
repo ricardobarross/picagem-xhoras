@@ -140,6 +140,17 @@ export function getPayPeriod(referenceDate: Date, cutoffDay: number): PayPeriod 
 }
 
 /** Formata "YYYY-MM-DD" como "DD/MM/YYYY". */
+const MONTH_NAMES_PT = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+];
+
+// Nome do mês em português a partir do número (1 = Janeiro). Usado sempre
+// que se mostra o mês de um subsídio/período em vez de o número.
+export function monthNamePt(month: number): string {
+  return MONTH_NAMES_PT[month - 1] ?? 'mês configurado';
+}
+
 export function formatDatePt(dateStr: string): string {
   const [y, m, d] = dateStr.split('-');
   return `${d}/${m}/${y}`;

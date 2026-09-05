@@ -14,7 +14,7 @@
 //      - Sábado: weekday_rate + saturday_extra_per_hour
 //      - Domingo: weekday_rate × sunday_multiplier
 
-import type { TimeEntry, UserSettings, IrsTaxBracket } from '@/types/database.types';
+import type { TimeEntry, UserSettings, IrsTaxBracket, SubsidyPaymentOverride } from '@/types/database.types';
 import { getDayCategory } from './time-utils';
 
 export interface HoursBreakdown {
@@ -160,6 +160,24 @@ export function calculateAbsencesBreakdown(entries: TimeEntry[]): AbsencesBreakd
   return breakdown;
 }
 
+// Resolve em que mês cada subsídio (férias/Natal) se aplica num dado ano:
+// usa o override em subsidy_payment_overrides para esse ano/tipo quando
+// existe, senão cai para o mês padrão configurado em UserSettings. Útil
+// para empresas (como a de Ricardo) onde o subsídio de férias não é
+// automático e muda de mês de ano para ano.
+export function resolveSubsidyMonths(
+  settings: UserSettings,
+  overrides: SubsidyPaymentOverride[],
+  year: number,
+): { holiday: number; christmas: number } {
+  const holidayOverride = overrides.find((o) => o.reference_year === year && o.subsidy_type === 'holiday');
+  const christmasOverride = overrides.find((o) => o.reference_year === year && o.subsidy_type === 'christmas');
+  return {
+    holiday: holidayOverride?.received_month ?? (settings.holiday_subsidy_month || 1),
+    christmas: christmasOverride?.received_month ?? (settings.christmas_subsidy_month || 11),
+  };
+}
+
 // ---------------------------------------------------------------------
 // 2–3. Rendimento bruto
 // ---------------------------------------------------------------------
@@ -170,6 +188,15 @@ export function calculateGrossBreakdown(
   daysWorkedInPeriod: number,
   referenceMonth?: number, // 1 a 12
   absences: AbsencesBreakdown = { unjustifiedAbsenceHours: 0, sickLeaveDays: 0, justifiedAbsenceDays: 0 },
+  // Substitui, só para este cálculo, em que mês cada subsídio é pago —
+  // usado quando há um registo em subsidy_payment_overrides para o ano em
+  // curso (empresas onde o subsídio não é automático nem sempre no mesmo
+  // mês). Sem override, usa-se sempre settings.holiday_subsidy_month /
+  // settings.christmas_subsidy_month, como antes.
+  subsidyMonths: { holiday: number; christmas: number } = {
+    holiday: settings.holiday_subsidy_month || 1,
+    christmas: settings.christmas_subsidy_month || 11,
+  },
 ): GrossBreakdown {
   const isEffective = settings.contract_regime === 'effective';
 
@@ -200,10 +227,10 @@ export function calculateGrossBreakdown(
     let holidaySubsidy = 0;
     let christmasSubsidy = 0;
     if (referenceMonth !== undefined) {
-      if (referenceMonth === (settings.holiday_subsidy_month || 1)) {
+      if (referenceMonth === subsidyMonths.holiday) {
         holidaySubsidy = baseSalary; // A empresa paga apenas sobre o base
       }
-      if (referenceMonth === (settings.christmas_subsidy_month || 11)) {
+      if (referenceMonth === subsidyMonths.christmas) {
         christmasSubsidy = baseSalary; // A empresa paga apenas sobre o base
       }
     }
@@ -392,14 +419,17 @@ export function calculatePayslip(params: {
   settings: UserSettings;
   brackets?: IrsTaxBracket[];
   referenceMonth?: number; // 1 a 12
+  subsidyMonths?: { holiday: number; christmas: number };
 }): PayslipSummary {
-  const { entries, settings, brackets = [], referenceMonth } = params;
+  const { entries, settings, brackets = [], referenceMonth, subsidyMonths } = params;
 
   const daysWorkedInPeriod = new Set(entries.map((e) => e.entry_date)).size;
 
   const hours = calculateHoursBreakdown(entries);
   const absences = calculateAbsencesBreakdown(entries);
-  const gross = calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth, absences);
+  const gross = subsidyMonths
+    ? calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth, absences, subsidyMonths)
+    : calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth, absences);
   const deductions = calculateDeductions(gross, settings, brackets);
 
   return {
