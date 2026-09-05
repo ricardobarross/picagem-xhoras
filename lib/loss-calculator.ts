@@ -96,6 +96,48 @@ export function calculateLegalHourlyRate(monthlySalary: number): number {
 }
 
 /**
+ * Verifica se as configurações da conta contêm alguma divergência real que
+ * justifique mostrar a Auditoria de Perdas. Sem isto, a página aparecia
+ * para qualquer conta em Contrato Efetivo mesmo sem nada para reportar
+ * (ex: sem prémio fixo, sem hora extra abaixo do mínimo legal, sem
+ * refeições extras) — informação desnecessária quando não há nenhuma
+ * divergência a auditar (pedido por Ricardo, 05/09/2026).
+ *
+ * Propositadamente não depende do simulador de horas/refeições da página
+ * (esses valores são ajustáveis pelo utilizador e não refletem a
+ * configuração real da conta) — só olha para o que está guardado em
+ * user_settings.
+ */
+export function hasAuditableDivergence(settings: UserSettings): boolean {
+  const declaredBaseSalary = settings.base_salary || 0;
+  const declaredFixedBonus = settings.fixed_bonus || 0;
+  const agreedRealSalary = settings.agreed_total_salary || (declaredBaseSalary + declaredFixedBonus);
+
+  // Conta ainda não configurada (ou em regime Horista, onde estes campos
+  // ficam a 0 — ver migração 0011): nada para auditar.
+  if (declaredBaseSalary <= 0 && agreedRealSalary <= 0) return false;
+
+  // 1. Divisão artificial entre salário base e prémio (a causa da perda nos
+  //    subsídios de férias/Natal, Art. 264º CT).
+  if (agreedRealSalary > declaredBaseSalary) return true;
+
+  // 2. Hora extra paga abaixo do mínimo legal da 1ª hora em dia útil
+  //    (Art. 268º, nº 1, al. a): +25% sobre o valor/hora).
+  const employerOvertimeRate = settings.overtime_fixed_rate || 0;
+  if (employerOvertimeRate > 0) {
+    const hourlyRateLegal = calculateLegalHourlyRate(agreedRealSalary);
+    const legalWeekday1stHourRate = Number((hourlyRateLegal * 1.25).toFixed(2));
+    if (employerOvertimeRate < legalWeekday1stHourRate) return true;
+  }
+
+  // 3. Refeições extras pagas em prémio (sujeitas a SS/IRS em vez de 100%
+  //    isentas em cartão até 10,20€/dia).
+  if ((settings.extra_meal_value || 0) > 0) return true;
+
+  return false;
+}
+
+/**
  * Realiza a auditoria comparativa entre o cenário real da empresa e o regime legal.
  */
 export function auditContractLosses(params: {

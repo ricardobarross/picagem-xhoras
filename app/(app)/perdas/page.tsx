@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { LossAuditClient } from '@/components/audit/LossAuditClient';
+import { hasAuditableDivergence } from '@/lib/loss-calculator';
 import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
 
 export const metadata = {
@@ -41,19 +42,22 @@ export default async function PerdasPage() {
 
   const typedSettings = settings as UserSettings;
 
-  // Esta auditoria compara o "salário base + prémio" declarado na folha com
-  // o ordenado real acordado — um cenário específico de Contrato Efetivo.
-  // Em regime horista não existe essa divisão, por isso não faz sentido
-  // (e, historicamente, os campos usados aqui podiam ainda conter valores
-  // de exemplo copiados de outra conta — ver migração 0011).
-  if (typedSettings.contract_regime !== 'effective') {
+  // A Auditoria só compara o que é pago com o que a lei exige quando há
+  // mesmo uma divergência configurada (ex: prémio separado do salário
+  // base, hora extra abaixo do mínimo legal, refeições extras pagas em
+  // prémio). Sem isso é informação desnecessária — fica oculta (pedido
+  // por Ricardo, 05/09/2026).
+  if (!hasAuditableDivergence(typedSettings)) {
     return (
       <div className="flex justify-center py-12">
         <p className="max-w-md text-center text-sm text-muted-foreground">
-          A Auditoria de Perdas aplica-se apenas ao regime de{' '}
-          <strong className="text-foreground">Contrato Efetivo</strong>, que compara o salário
-          declarado na folha com o ordenado real acordado. Em regime{' '}
-          <strong className="text-foreground">Horista</strong> este comparativo não se aplica.
+          Não há nenhuma divergência a reportar com as configurações atuais — a Auditoria de
+          Perdas só aparece quando existe uma diferença entre o que está configurado em{' '}
+          <a href="/configuracoes" className="underline text-primary">
+            Configurações
+          </a>{' '}
+          e o que a lei exige (ex: salário dividido em base + prémio, hora extra abaixo do
+          mínimo legal, ou refeições extras pagas em prémio).
         </p>
       </div>
     );
