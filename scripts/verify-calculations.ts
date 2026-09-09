@@ -116,14 +116,34 @@ check('Subsídio de Férias pago em Janeiro (= base 1.500€)', januaryPayslip.g
 
 console.log('\n--- F-01: anualização dos escalões anuais de IRS (Art. 68º CIRS) na retenção mensal ---');
 const officialAnnualBrackets: IrsTaxBracket[] = [
-  { id: 'b1', user_settings_id: 's', min_income: 0, max_income: 8342, rate: 12.5, deduction: 0, created_at: '' },
-  { id: 'b2', user_settings_id: 's', min_income: 8342, max_income: 12587, rate: 15.7, deduction: 266.94, created_at: '' },
-  { id: 'b3', user_settings_id: 's', min_income: 12587, max_income: 17838, rate: 21.2, deduction: 959.26, created_at: '' },
+  { id: 'b1', user_settings_id: 's', min_income: 0, max_income: 8342, rate: 12.5, deduction: 0, scale: 'annual', dependent_deduction: 0, created_at: '' },
+  { id: 'b2', user_settings_id: 's', min_income: 8342, max_income: 12587, rate: 15.7, deduction: 266.94, scale: 'annual', dependent_deduction: 0, created_at: '' },
+  { id: 'b3', user_settings_id: 's', min_income: 12587, max_income: 17838, rate: 21.2, deduction: 959.26, scale: 'annual', dependent_deduction: 0, created_at: '' },
 ];
 const bracketSettings = baseSettings({ irs_calculation_type: 'bracket' });
 // Base tributável mensal de 1.000€ × 14 = 14.000€/ano → cai no escalão dos 21,2% (12.587–17.838€).
 const irsMensal = calculateIrs(1000, bracketSettings, officialAnnualBrackets);
 check('IRS mensal sobre 1.000€ usando escalões ANUAIS (anualizado ×14, não aplicado direto)', irsMensal, 143.48);
+
+console.log('\n--- Migração 0012: Tabela I mensal (2026) com escala explícita + dedução por dependente ---');
+// Ricardo, 09/09/2026: base tributável real ~2.223€ (2.388€ − SS de 165€),
+// casado dois titulares, 3 dependentes — validado contra o recibo real
+// (306,00€), ~1,4% de diferença por arredondamentos.
+const tableIMonthlyBrackets: IrsTaxBracket[] = [
+  { id: 't1', user_settings_id: 's', min_income: 1819, max_income: 2119, rate: 24.1, deduction: 193.33, scale: 'monthly', dependent_deduction: 21.43, created_at: '' },
+  { id: 't2', user_settings_id: 's', min_income: 2119, max_income: 2499, rate: 34.9, deduction: 401.19, scale: 'monthly', dependent_deduction: 21.43, created_at: '' },
+];
+const marriedTwoEarnersSettings = baseSettings({
+  irs_calculation_type: 'bracket',
+  irs_marital_status: 'married_2_earners',
+  irs_dependents_count: 3,
+});
+const irsTabelaI = calculateIrs(2223, marriedTwoEarnersSettings, tableIMonthlyBrackets);
+check(
+  'IRS mensal sobre 2.223€ usando Tabela I (escala mensal, 3 dependentes: 2223×34,9% − 401,19 − 3×21,43)',
+  irsTabelaI,
+  310.35,
+);
 
 console.log('\n--- Perda líquida na auditoria de perdas (Ricardo, 04/09/2026: os descontos sobre os valores em falta têm de entrar na conta) ---');
 const netLossAudit = auditContractLosses({
