@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { ProfileForm } from '@/components/settings/ProfileForm';
 import { ContractSettingsForm } from '@/components/settings/ContractSettingsForm';
 import { RatesForm } from '@/components/settings/RatesForm';
 import { DescontosForm } from '@/components/settings/DescontosForm';
 import { SubsidyOverridesForm } from '@/components/settings/SubsidyOverridesForm';
-import type { IrsTaxBracket, SubsidyPaymentOverride, UserSettings } from '@/types/database.types';
+import type { IrsTaxBracket, Profile, SubsidyPaymentOverride, UserSettings } from '@/types/database.types';
 
 export default async function ConfiguracoesPage() {
   const supabase = await createClient();
@@ -44,6 +45,8 @@ export default async function ConfiguracoesPage() {
     .select('*')
     .eq('user_id', user.id);
 
+  const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+
   const isEffective = typedSettings.contract_regime === 'effective';
 
   return (
@@ -54,6 +57,9 @@ export default async function ConfiguracoesPage() {
           Gere os teus termos contratuais, perfil fiscal em Portugal, escalões de IRS e taxas de Segurança Social.
         </p>
       </div>
+
+      {/* Nome e empresa mostrados no cabeçalho da app e no Laudo de Auditoria */}
+      <ProfileForm userId={user.id} initialProfile={(profile as Profile) ?? null} />
 
       {/* Formulário Principal: Contrato Efetivo e Perfil Fiscal */}
       <ContractSettingsForm userId={user.id} initialSettings={typedSettings} />

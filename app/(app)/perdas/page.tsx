@@ -2,7 +2,13 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { LossAuditClient } from '@/components/audit/LossAuditClient';
 import { hasAuditableDivergence } from '@/lib/loss-calculator';
-import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
+import type {
+  IrsTaxBracket,
+  PayslipReceipt,
+  Profile,
+  SubsidyPaymentOverride,
+  UserSettings,
+} from '@/types/database.types';
 
 export const metadata = {
   title: 'Auditoria de Perdas Contratuais | Picagem XHoras',
@@ -63,16 +69,26 @@ export default async function PerdasPage() {
     );
   }
 
-  const { data: brackets } = await supabase
-    .from('irs_tax_brackets')
-    .select('*')
-    .eq('user_settings_id', settings.id);
+  const [{ data: brackets }, { data: receipts }, { data: overrides }, { data: profile }] = await Promise.all([
+    supabase.from('irs_tax_brackets').select('*').eq('user_settings_id', settings.id),
+    supabase.from('payslip_receipts').select('*').eq('user_id', user.id),
+    supabase.from('subsidy_payment_overrides').select('*').eq('user_id', user.id),
+    supabase.from('profiles').select('*').eq('id', user.id).single(),
+  ]);
+
+  const typedProfile = profile as Profile | null;
+  const userName = typedProfile?.full_name?.trim() || user.email?.split('@')[0] || 'Utilizador';
+  const companyName = typedProfile?.company_name?.trim() || null;
 
   return (
     <div className="py-6">
       <LossAuditClient
         initialSettings={typedSettings}
         brackets={(brackets ?? []) as IrsTaxBracket[]}
+        receipts={(receipts ?? []) as PayslipReceipt[]}
+        overrides={(overrides ?? []) as SubsidyPaymentOverride[]}
+        userName={userName}
+        companyName={companyName}
       />
     </div>
   );

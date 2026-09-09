@@ -1,23 +1,40 @@
 @import "tailwindcss";
 
+/* Paleta "calma" pedida por Ricardo (05/09/2026): fundo quente/off-white,
+   acento verde-azulado (em vez do preto quase puro) e alertas em terracota
+   em vez de vermelho pesado. Mantém os nomes de variáveis do shadcn/ui
+   (--background, --primary, --destructive, etc.) para que todos os
+   componentes existentes (button.tsx, card.tsx, formulários) herdem a nova
+   paleta sem alterações — mais os tokens extra (--warn-*, --sidebar-*,
+   --accent-dark/soft) usados pela sidebar e pelos alertas de auditoria. */
 :root {
-  --radius: 0.625rem;
-  --background: #ffffff;
-  --foreground: #171717;
+  --radius: 0.75rem;
+  --background: #f6f7f5;
+  --foreground: #232b27;
   --card: #ffffff;
-  --card-foreground: #171717;
-  --primary: #171717;
-  --primary-foreground: #fafafa;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #171717;
-  --muted: #f4f4f5;
-  --muted-foreground: #71717a;
-  --accent: #f4f4f5;
-  --accent-foreground: #171717;
-  --destructive: #dc2626;
-  --border: #e4e4e7;
-  --input: #e4e4e7;
-  --ring: #a1a1aa;
+  --card-foreground: #232b27;
+  --primary: #2f6f73;
+  --primary-foreground: #ffffff;
+  --secondary: #e1edec;
+  --secondary-foreground: #255a5d;
+  --muted: #eef2ef;
+  --muted-foreground: #6e7871;
+  --accent: #e1edec;
+  --accent-foreground: #255a5d;
+  --destructive: #b9573f;
+  --border: #e4e8e3;
+  --input: #e4e8e3;
+  --ring: #2f6f73;
+
+  /* Tokens extra usados pela sidebar/cabeçalho e pelos alertas de auditoria */
+  --accent-dark: #255a5d;
+  --accent-soft: #e1edec;
+  --sidebar-bg: #eef2ef;
+  --sidebar-border: #dfe5e0;
+  --text-faint: #98a199;
+  --warn: #b9713a;
+  --warn-soft: #f6e9dc;
+  --warn-text: #7c4a21;
 }
 
 @theme inline {
@@ -45,22 +62,31 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --card: #171717;
-    --card-foreground: #ededed;
-    --primary: #ededed;
-    --primary-foreground: #171717;
-    --secondary: #27272a;
-    --secondary-foreground: #ededed;
-    --muted: #27272a;
-    --muted-foreground: #a1a1aa;
-    --accent: #27272a;
-    --accent-foreground: #ededed;
-    --destructive: #ef4444;
-    --border: #27272a;
-    --input: #27272a;
-    --ring: #52525b;
+    --background: #171a18;
+    --foreground: #e9ece8;
+    --card: #1f2320;
+    --card-foreground: #e9ece8;
+    --primary: #6fb3b0;
+    --primary-foreground: #10201f;
+    --secondary: #26332f;
+    --secondary-foreground: #a8d6d2;
+    --muted: #232823;
+    --muted-foreground: #9aa39c;
+    --accent: #26332f;
+    --accent-foreground: #a8d6d2;
+    --destructive: #d97a63;
+    --border: #2c322c;
+    --input: #2c322c;
+    --ring: #6fb3b0;
+
+    --accent-dark: #a8d6d2;
+    --accent-soft: #26332f;
+    --sidebar-bg: #1c211d;
+    --sidebar-border: #2c322c;
+    --text-faint: #6f776f;
+    --warn: #d99461;
+    --warn-soft: #332a20;
+    --warn-text: #f0c9a4;
   }
 }
 
@@ -68,4 +94,15 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Laudo de auditoria: layout de impressão/exportação PDF — esconde a chrome
+   da app (sidebar, cabeçalho, botões de ação) e imprime só o documento. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff;
+  }
 }

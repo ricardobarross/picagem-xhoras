@@ -238,10 +238,10 @@ export default async function DashboardPage({
       {/* Banner de Aviso de Perdas para Contrato Efetivo — só depois de a
           conta ter configurado a remuneração (senão mostraria 0€ sem sentido). */}
       {isEffective && !rateMissing && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-[var(--warn)]/25 bg-[var(--warn-soft)] p-4 text-sm">
           <div className="flex items-center gap-2">
-            <span className="flex h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
-            <span className="text-foreground">
+            <span className="flex h-2.5 w-2.5 flex-shrink-0 rounded-full bg-[var(--warn)]" />
+            <span className="text-[var(--warn-text)]">
               Modo <strong>Contrato Efetivo</strong> ativo (Base {euro(typedSettings.base_salary)} + Prémio {euro(typedSettings.fixed_bonus)}).
               {yearlySubsidyLoss > 0 && (
                 <>
@@ -252,7 +252,7 @@ export default async function DashboardPage({
           </div>
           <Link
             href="/perdas"
-            className="inline-flex items-center whitespace-nowrap font-semibold text-red-600 hover:underline"
+            className="inline-flex items-center whitespace-nowrap font-semibold text-[var(--warn-text)] hover:underline"
           >
             Ver Auditoria de Perdas →
           </Link>

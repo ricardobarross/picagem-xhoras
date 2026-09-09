@@ -3,7 +3,7 @@
 // components/audit/LossAuditClient.tsx
 // Dashboard interativo de auditoria de direitos sonegados e perdas laborais.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
@@ -17,10 +17,12 @@ import {
   TrendingDown,
   Upload,
 } from 'lucide-react';
-import type { IrsTaxBracket, UserSettings } from '@/types/database.types';
+import type { IrsTaxBracket, PayslipReceipt, SubsidyPaymentOverride, UserSettings } from '@/types/database.types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { auditContractLosses } from '@/lib/loss-calculator';
+import { buildAuditReport } from '@/lib/audit-report';
+import { AuditReportDocument } from '@/components/audit/AuditReportDocument';
 
 function euro(value: number) {
   return value.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' });
@@ -38,15 +40,24 @@ function monthName(month: number): string {
 export function LossAuditClient({
   initialSettings,
   brackets = [],
+  receipts = [],
+  overrides = [],
+  userName,
+  companyName,
 }: {
   initialSettings: UserSettings;
   brackets?: IrsTaxBracket[];
+  receipts?: PayslipReceipt[];
+  overrides?: SubsidyPaymentOverride[];
+  userName: string;
+  companyName?: string | null;
 }) {
   // Simuladores interativos
   const [simulatedOtHours, setSimulatedOtHours] = useState(15);
   const [simulatedExtraMeals, setSimulatedExtraMeals] = useState(6);
   const [receiptNotes, setReceiptNotes] = useState('');
   const [receiptSaved, setReceiptSaved] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const audit = auditContractLosses({
     settings: initialSettings,
@@ -55,6 +66,11 @@ export function LossAuditClient({
     brackets,
   });
 
+  const report = useMemo(
+    () => buildAuditReport({ settings: initialSettings, overrides, receipts }),
+    [initialSettings, overrides, receipts],
+  );
+
   const holidayMonthName = monthName(initialSettings.holiday_subsidy_month);
   const christmasMonthName = monthName(initialSettings.christmas_subsidy_month);
   // A mesma taxa de perda fiscal (~26% de SS+IRS) usada em audit.meals, aplicada
@@ -62,21 +78,33 @@ export function LossAuditClient({
   const netPerMealInBonus = Number((audit.meals.mealUnitValue * 0.74).toFixed(2));
   const lossPerMeal = Number((audit.meals.mealUnitValue - netPerMealInBonus).toFixed(2));
 
+  if (showReport) {
+    return (
+      <AuditReportDocument
+        onBack={() => setShowReport(false)}
+        audit={audit}
+        report={report}
+        userName={userName}
+        companyName={companyName}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col gap-8 w-full max-w-5xl mx-auto pb-16">
       {/* 1. Header com Alerta de Impacto */}
-      <div className="rounded-xl border border-red-500/30 bg-gradient-to-r from-red-500/10 via-amber-500/5 to-background p-6 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="rounded-xl border border-[var(--warn)]/25 bg-[var(--warn-soft)] p-6 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-4">
-            <div className="rounded-full bg-red-500/20 p-3 text-red-600">
+            <div className="rounded-full bg-[var(--warn)]/15 p-3 text-[var(--warn-text)]">
               <ShieldAlert className="h-8 w-8" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight text-foreground">
                   Auditoria de Perdas Contratuais
                 </h1>
-                <span className="rounded bg-red-500/10 px-2.5 py-0.5 text-xs font-semibold text-red-600">
+                <span className="rounded bg-[var(--warn)]/15 px-2.5 py-0.5 text-xs font-semibold text-[var(--warn-text)]">
                   Direitos Sonegados
                 </span>
               </div>
@@ -87,26 +115,32 @@ export function LossAuditClient({
               </p>
             </div>
           </div>
-          <Link href="/configuracoes">
-            <Button variant="outline" size="sm" className="whitespace-nowrap">
-              Ajustar Dados em Configurações
+          <div className="flex flex-shrink-0 flex-wrap gap-2 sm:flex-col sm:items-stretch">
+            <Button onClick={() => setShowReport(true)} className="gap-2 whitespace-nowrap">
+              <FileText className="h-4 w-4" />
+              Gerar Relatório de Auditoria
             </Button>
-          </Link>
+            <Link href="/configuracoes">
+              <Button variant="outline" size="sm" className="w-full whitespace-nowrap">
+                Ajustar Dados em Configurações
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
 
       {/* 2. Grandes Números de Prejuízo */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* Perda Anual em Subsídios */}
-        <Card className="border-red-500/20 bg-card">
+        <Card className="border-[var(--warn)]/20 bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
               <span>Perda Anual em Subsídios</span>
-              <TrendingDown className="h-4 w-4 text-red-500" />
+              <TrendingDown className="h-4 w-4 text-[var(--warn)]" />
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-extrabold text-red-600">
+            <div className="text-3xl font-extrabold text-[var(--warn-text)]">
               -{euro(audit.subsidies.totalAnnualSubsidiesLossNet)}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -119,15 +153,15 @@ export function LossAuditClient({
         </Card>
 
         {/* Perda Média por Hora Extra */}
-        <Card className="border-amber-500/20 bg-card">
+        <Card className="border-[var(--warn)]/20 bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
               <span>Prejuízo por Hora Extra</span>
-              <ArrowDownRight className="h-4 w-4 text-amber-500" />
+              <ArrowDownRight className="h-4 w-4 text-[var(--warn)]" />
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-extrabold text-amber-600">
+            <div className="text-3xl font-extrabold text-[var(--warn-text)]">
               -{(audit.legalWeekdaySubsequentRate - audit.employerOvertimeRate).toFixed(2)} €/h
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -137,15 +171,15 @@ export function LossAuditClient({
         </Card>
 
         {/* Desconto Indevido em Refeições */}
-        <Card className="border-orange-500/20 bg-card">
+        <Card className="border-[var(--warn)]/20 bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
               <span>Impostos em Refeições</span>
-              <AlertTriangle className="h-4 w-4 text-orange-500" />
+              <AlertTriangle className="h-4 w-4 text-[var(--warn)]" />
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-extrabold text-orange-600">~26%</div>
+            <div className="text-3xl font-extrabold text-[var(--warn-text)]">~26%</div>
             <p className="mt-1 text-xs text-muted-foreground">
               A refeição extra ({euro(audit.meals.mealUnitValue)}) no prémio paga SS e IRS, em vez de 100% isenta em cartão.
             </p>
@@ -153,15 +187,15 @@ export function LossAuditClient({
         </Card>
 
         {/* Impacto em Indemnização */}
-        <Card className="border-purple-500/20 bg-card">
+        <Card className="border-[var(--accent)] bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
               <span>Indemnização Futura</span>
-              <Scale className="h-4 w-4 text-purple-500" />
+              <Scale className="h-4 w-4 text-[var(--accent-dark)]" />
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-extrabold text-purple-600">
+            <div className="text-3xl font-extrabold text-[var(--accent-dark)]">
               -{audit.severance.lossPercentage}%
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -201,13 +235,13 @@ export function LossAuditClient({
                       Base oficial para todos os cálculos
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-red-600 font-semibold">
+                  <td className="px-4 py-3 text-[var(--warn-text)] font-semibold">
                     {euro(audit.declaredBaseSalary)} (+ {euro(audit.declaredFixedBonus)} prémio)
                   </td>
-                  <td className="px-4 py-3 text-green-600 font-semibold">
+                  <td className="px-4 py-3 text-[var(--accent-dark)] font-semibold">
                     {euro(audit.agreedRealSalary)}
                   </td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     Art. 258º e 260º CT
                   </td>
                 </tr>
@@ -221,7 +255,7 @@ export function LossAuditClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.subsidies.paidHolidaySubsidy)}</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.subsidies.legalHolidaySubsidy)}</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     -{euro(audit.subsidies.holidaySubsidyLossNet)}
                     <span className="block text-[10px] font-normal text-muted-foreground">
                       bruto: {euro(audit.subsidies.holidaySubsidyLoss)}
@@ -238,7 +272,7 @@ export function LossAuditClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.subsidies.paidChristmasSubsidy)}</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.subsidies.legalChristmasSubsidy)}</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     -{euro(audit.subsidies.christmasSubsidyLossNet)}
                     <span className="block text-[10px] font-normal text-muted-foreground">
                       bruto: {euro(audit.subsidies.christmasSubsidyLoss)}
@@ -255,7 +289,7 @@ export function LossAuditClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.employerOvertimeRate)}/h</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.legalWeekday1stHourRate)}/h</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     -{euro(audit.legalWeekday1stHourRate - audit.employerOvertimeRate)}/h
                   </td>
                 </tr>
@@ -269,7 +303,7 @@ export function LossAuditClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.employerOvertimeRate)}/h</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.legalWeekdaySubsequentRate)}/h</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     -{euro(audit.legalWeekdaySubsequentRate - audit.employerOvertimeRate)}/h
                   </td>
                 </tr>
@@ -283,7 +317,7 @@ export function LossAuditClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{euro(audit.employerOvertimeRate)}/h</td>
                   <td className="px-4 py-3 font-semibold text-foreground">{euro(audit.legalWeekendRate)}/h</td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     -{euro(audit.legalWeekendRate - audit.employerOvertimeRate)}/h
                   </td>
                 </tr>
@@ -301,7 +335,7 @@ export function LossAuditClient({
                   <td className="px-4 py-3 font-semibold text-foreground">
                     100% Isenta ({euro(audit.meals.mealUnitValue)} líquido)
                   </td>
-                  <td className="px-4 py-3 text-right font-bold text-red-600">
+                  <td className="px-4 py-3 text-right font-bold text-[var(--warn-text)]">
                     -{euro(lossPerMeal)} por refeição
                   </td>
                 </tr>
@@ -372,7 +406,7 @@ export function LossAuditClient({
               <p className="text-xs uppercase font-medium text-muted-foreground">
                 Perda Média Mensal Estimada
               </p>
-              <p className="mt-1 text-2xl font-bold text-red-600">
+              <p className="mt-1 text-2xl font-bold text-[var(--warn-text)]">
                 -{euro(audit.totalMonthlyLossSimulatedNet)} / mês
               </p>
               <p className="text-[11px] text-muted-foreground">
@@ -385,7 +419,7 @@ export function LossAuditClient({
               <p className="text-xs uppercase font-medium text-muted-foreground">
                 Perda Anual Garantida (Subsídios, líquido)
               </p>
-              <p className="mt-1 text-2xl font-bold text-red-600">
+              <p className="mt-1 text-2xl font-bold text-[var(--warn-text)]">
                 -{euro(audit.subsidies.totalAnnualSubsidiesLossNet)}
               </p>
               <p className="text-[11px] text-muted-foreground">
@@ -398,7 +432,7 @@ export function LossAuditClient({
               <p className="text-xs uppercase font-medium text-muted-foreground">
                 Prejuízo Total Projetado ao Ano
               </p>
-              <p className="mt-1 text-3xl font-extrabold text-red-600">
+              <p className="mt-1 text-3xl font-extrabold text-[var(--warn-text)]">
                 -{euro(audit.totalAnnualLossProjectedNet)}
               </p>
               <p className="text-[11px] text-muted-foreground">
@@ -410,34 +444,42 @@ export function LossAuditClient({
       </Card>
 
       {/* 5. Área de Receção e Análise de Recibos de Vencimento */}
-      <Card className="border-blue-500/20 shadow-md">
+      <Card className="border-[var(--accent)] shadow-md">
         <CardHeader>
           <div className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-blue-600" />
+            <FileText className="h-5 w-5 text-[var(--accent-dark)]" />
             <CardTitle className="text-lg">Análise dos Teus Recibos de Vencimento</CardTitle>
           </div>
           <CardDescription>
-            Podes fornecer as linhas e rubricas dos teus recibos reais para auditarmos cêntimo a cêntimo
-            a retenção de IRS, descontos de Segurança Social e camuflagem de prémios.
+            {report.hasReceipts
+              ? `${report.monthlyRegistry.length} recibo(s) real(is) já registado(s) — incluídos automaticamente no Relatório de Auditoria acima.`
+              : 'Podes fornecer as linhas e rubricas dos teus recibos reais para auditarmos cêntimo a cêntimo a retenção de IRS, descontos de Segurança Social e camuflagem de prémios.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="rounded-lg bg-blue-500/10 p-4 text-sm text-blue-900 dark:text-blue-200 flex items-start gap-3">
-            <CheckCircle2 className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="rounded-lg bg-[var(--accent-soft)] p-4 text-sm text-[var(--accent-dark)] flex items-start gap-3">
+            <CheckCircle2 className="h-5 w-5 text-[var(--accent-dark)] flex-shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold">O que precisamos de verificar nos teus recibos:</p>
+              <p className="font-semibold">
+                {report.hasReceipts
+                  ? 'Os recibos registados em Recibos alimentam o Relatório de Auditoria:'
+                  : 'O que precisamos de verificar nos teus recibos:'}
+              </p>
               <ul className="mt-1 list-disc list-inside space-y-1 text-xs">
                 <li>Designação exata das rubricas (ex: &quot;Vencimento Base&quot;, &quot;Prémio de Produtividade&quot;, &quot;Gratificação&quot;).</li>
                 <li>Taxa percentual de Retenção na Fonte de IRS aplicada em cada mês.</li>
                 <li>Base de incidência de Segurança Social (se incide sobre {euro(audit.declaredBaseSalary)} ou sobre {euro(audit.agreedRealSalary)}).</li>
                 <li>Como vêm discriminadas as horas extras e refeições de {euro(audit.meals.mealUnitValue)}.</li>
               </ul>
+              <Link href="/recibos" className="mt-2 inline-block text-xs font-semibold underline">
+                {report.hasReceipts ? 'Adicionar ou editar recibos →' : 'Ir para Recibos e anexar o primeiro →'}
+              </Link>
             </div>
           </div>
 
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Cola aqui o texto, valores ou notas dos teus recibos de vencimento:
+              Notas rápidas (opcional — não substitui o registo estruturado em Recibos):
             </label>
             <textarea
               rows={4}
@@ -452,15 +494,16 @@ export function LossAuditClient({
             <Button
               onClick={() => setReceiptSaved(true)}
               disabled={!receiptNotes.trim()}
+              variant="outline"
               className="gap-2"
             >
               <Upload className="h-4 w-4" />
-              Registar Dados do Recibo para Análise
+              Guardar Nota Rápida
             </Button>
 
             {receiptSaved && (
-              <span className="text-xs text-green-600 font-medium flex items-center gap-1">
-                <CheckCircle2 className="h-4 w-4" /> Dados guardados para cruzamento com o motor fiscal!
+              <span className="text-xs text-[var(--accent-dark)] font-medium flex items-center gap-1">
+                <CheckCircle2 className="h-4 w-4" /> Nota guardada nesta sessão.
               </span>
             )}
           </div>
