@@ -489,7 +489,11 @@ export default async function DashboardPage({
 
               <div className="grid grid-cols-1 gap-1 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground sm:grid-cols-2">
                 <span>Valor sujeito a Segurança Social: {euro(payslip.gross.ssTaxableBase)}</span>
-                <span>Valor sujeito a IRS: {euro(payslip.gross.totalTaxable)}</span>
+                {/* A base de IRS é o valor tributável já líquido de Segurança Social
+                    (ver calculateDeductions em lib/salary-calculator.ts: irsBase =
+                    totalTaxable - socialSecurity) — mostrar totalTaxable aqui era
+                    enganador, não batia com o valor que o cálculo do IRS realmente usa. */}
+                <span>Valor sujeito a IRS: {euro(Math.max(0, payslip.gross.totalTaxable - payslip.deductions.socialSecurity))}</span>
               </div>
             </>
           ) : (

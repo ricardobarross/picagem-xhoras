@@ -368,12 +368,24 @@ export function calculateIrs(
 
   if (brackets.length === 0) return 0;
 
-  // Deteção inteligente de escalões anuais (CIRS Art. 68º) vs escalões mensais:
-  // Se o menor limiar > 3000 ou maior limiar > 5000, a tabela é anual.
-  const isAnnualScale = brackets.some((b) => b.min_income > 3000 || (b.max_income !== null && b.max_income > 5000));
+  // Escala explícita gravada em cada escalão (coluna `scale`, migração
+  // 0012) — já não se adivinha pela grandeza dos valores. A heurística
+  // antiga ("menor limiar > 3000 ou maior limiar > 5000 ⇒ é anual") ficava
+  // errada com a Tabela I mensal real: o seu último escalão começa em
+  // 20.221€, o que a classificava como anual mesmo sendo mensal.
+  //
+  // Diagnóstico do bug reportado por Ricardo (09/09/2026, "muito desconto
+  // no IRS"): a app usava sempre a escala ANUAL do art. 68º CIRS
+  // (anualizada ×14) como aproximação da tabela MENSAL oficial de retenção
+  // na fonte — são tabelas diferentes (a mensal varia por estado civil e
+  // nº de dependentes, a anual não) e a anualização ×14 sobrestima bastante
+  // o desconto real do recibo.
+  const isAnnualScale = brackets[0]?.scale === 'annual';
 
   if (isAnnualScale) {
-    // Anualização fiscal para folha de pagamento (base × 14 meses)
+    // Escala anual legada: anualização fiscal para folha de pagamento
+    // (base × 14 meses). Não tem parcela por dependente (essa só existe
+    // nas tabelas mensais oficiais).
     const annualBase = taxableBase * 14;
     const bracket = brackets
       .filter((b) => annualBase >= b.min_income && (b.max_income === null || annualBase <= b.max_income))
@@ -384,13 +396,18 @@ export function calculateIrs(
     return Math.round((annualTax / 14) * 100) / 100;
   }
 
-  // Tabela em valores mensais diretos
+  // Tabela mensal de retenção na fonte (Tabela I/II/III, Continente):
+  // imposto = base declarada × taxa − dedução do escalão − (nº de
+  // dependentes × parcela adicional a abater por dependente). A parcela
+  // por dependente vem gravada no próprio escalão porque varia consoante a
+  // tabela (21,43€ na Tabela I, 34,29€ na II, 42,86€ na III).
   const bracket = brackets
     .filter((b) => taxableBase >= b.min_income && (b.max_income === null || taxableBase <= b.max_income))
     .sort((a, b) => b.min_income - a.min_income)[0];
 
   if (!bracket) return 0;
-  return Math.max(0, taxableBase * (bracket.rate / 100) - bracket.deduction);
+  const dependentsDeduction = (settings.irs_dependents_count || 0) * (bracket.dependent_deduction || 0);
+  return Math.max(0, taxableBase * (bracket.rate / 100) - bracket.deduction - dependentsDeduction);
 }
 
 export function calculateDeductions(

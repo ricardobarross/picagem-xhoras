@@ -21,6 +21,15 @@ export type PaidBy = 'employee' | 'employer';
 export type IrsCalculationType = 'fixed_rate' | 'bracket';
 export type ContractRegime = 'effective' | 'hourly';
 export type IrsMaritalStatus = 'single' | 'married_1_earner' | 'married_2_earners';
+// monthly = tabela de retenção na fonte mensal (Despacho anual, correto
+// para simular o recibo do mês); annual = escala do art. 68º CIRS
+// (declaração anual, anualizada ×14 pela app legada — ver migração 0012).
+export type IrsScale = 'monthly' | 'annual';
+// Qual das tabelas mensais de retenção (Continente) um conjunto de
+// escalões representa: table_i = não casado sem dependentes / casado
+// dois titulares; table_ii = não casado com dependentes; table_iii =
+// casado único titular. 'annual' = escala anual legada (sem tabela).
+export type IrsTableKey = 'annual' | 'table_i' | 'table_ii' | 'table_iii';
 export type FiscalRegion = 'continente' | 'acores' | 'madeira';
 export type SubsidyMode = 'full_in_month' | 'duodecimos';
 // work = dia normal trabalhado; unjustified_absence = falta injustificada
@@ -110,12 +119,17 @@ export type IrsTaxBracket = {
   max_income: number | null;
   rate: number;
   deduction: number;
+  scale: IrsScale;
+  dependent_deduction: number; // parcela adicional a abater, por dependente (só relevante em scale='monthly')
   created_at: string;
 };
 
 // Tabela de referência (não editável na app) com os escalões gerais de
 // IRS do Continente por ano fiscal — usada só para pré-preencher
 // `irs_tax_brackets` a partir do botão "Carregar escalões oficiais".
+// Desde a migração 0012, guarda tanto a escala anual legada (table_key
+// 'annual') como as três tabelas mensais de retenção na fonte (table_i/
+// ii/iii), coexistindo no mesmo fiscal_year.
 export type IrsOfficialBracket = {
   id: string;
   fiscal_year: number;
@@ -123,6 +137,9 @@ export type IrsOfficialBracket = {
   max_income: number | null;
   rate: number;
   deduction: number;
+  scale: IrsScale;
+  table_key: IrsTableKey;
+  dependent_deduction: number;
   created_at: string;
 };
 

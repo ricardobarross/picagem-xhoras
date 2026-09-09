@@ -9,7 +9,14 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import type { IrsCalculationType, IrsOfficialBracket, IrsTaxBracket, UserSettings } from '@/types/database.types';
+import type {
+  IrsCalculationType,
+  IrsOfficialBracket,
+  IrsScale,
+  IrsTableKey,
+  IrsTaxBracket,
+  UserSettings,
+} from '@/types/database.types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
@@ -20,6 +27,8 @@ type BracketRow = {
   max_income: string; // vazio = sem limite superior
   rate: string;
   deduction: string;
+  scale: IrsScale;
+  dependent_deduction: string;
 };
 
 function bracketToRow(b: IrsTaxBracket): BracketRow {
@@ -29,12 +38,32 @@ function bracketToRow(b: IrsTaxBracket): BracketRow {
     max_income: b.max_income === null ? '' : String(b.max_income),
     rate: String(b.rate),
     deduction: String(b.deduction),
+    scale: b.scale ?? 'annual',
+    dependent_deduction: String(b.dependent_deduction ?? 0),
   };
 }
 
 function emptyRow(): BracketRow {
-  return { min_income: '', max_income: '', rate: '', deduction: '' };
+  return { min_income: '', max_income: '', rate: '', deduction: '', scale: 'annual', dependent_deduction: '0' };
 }
+
+// Qual tabela mensal de retenção na fonte (Continente) usar consoante o
+// perfil fiscal do próprio utilizador (Art. 99º CIRS, configurado em
+// "Regime de Contrato e Perfil de Admissão"). Tabela I cobre tanto "não
+// casado sem dependentes" como "casado, dois titulares" — têm os mesmos
+// escalões, só a parcela por dependente é que muda entre tabelas.
+function resolveTableKey(settings: UserSettings): IrsTableKey {
+  if (settings.irs_marital_status === 'married_1_earner') return 'table_iii';
+  if (settings.irs_marital_status === 'single' && (settings.irs_dependents_count || 0) > 0) return 'table_ii';
+  return 'table_i';
+}
+
+const TABLE_LABELS: Record<IrsTableKey, string> = {
+  annual: 'Escala anual (art. 68º CIRS)',
+  table_i: 'Tabela I — Não casado sem dependentes / Casado, dois titulares',
+  table_ii: 'Tabela II — Não casado, com dependentes',
+  table_iii: 'Tabela III — Casado, único titular',
+};
 
 export function DescontosForm({
   userId,
@@ -61,6 +90,7 @@ export function DescontosForm({
 
   const [loadingOfficial, setLoadingOfficial] = useState(false);
   const [officialYearLoaded, setOfficialYearLoaded] = useState<number | null>(null);
+  const [officialTableLoaded, setOfficialTableLoaded] = useState<IrsTableKey | null>(null);
 
   function updateBracket(index: number, patch: Partial<BracketRow>) {
     setBrackets((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -70,19 +100,29 @@ export function DescontosForm({
     setBrackets((rows) => rows.filter((_, i) => i !== index));
   }
 
-  // Pré-preenche a lista de escalões com a tabela geral de IRS mais
-  // recente disponível em `irs_official_brackets` (dados de referência —
-  // ver comentário na migração 0004). Fica tudo editável depois de
-  // carregado, e só grava de facto quando se clica em "Guardar".
+  // Pré-preenche a lista de escalões com a tabela MENSAL de retenção na
+  // fonte (Tabela I/II/III, Continente) certa para o perfil fiscal desta
+  // conta — estado civil e nº de dependentes, configurados em "Regime de
+  // Contrato e Perfil de Admissão" (Art. 99º CIRS). Antes desta correção
+  // (migração 0012, 09/09/2026) carregava-se sempre a escala ANUAL do
+  // art. 68º CIRS, que não é a tabela usada para reter IRS no recibo
+  // mensal — daí a app mostrar sempre muito mais desconto do que o real.
+  // Fica tudo editável depois de carregado, e só grava de facto quando se
+  // clica em "Guardar".
   async function handleLoadOfficialBrackets() {
     setError(null);
     setSaved(false);
     setOfficialYearLoaded(null);
+    setOfficialTableLoaded(null);
     setLoadingOfficial(true);
+
+    const tableKey = resolveTableKey(initialSettings);
 
     const { data, error: fetchError } = await supabase
       .from('irs_official_brackets')
       .select('*')
+      .eq('table_key', tableKey)
+      .eq('scale', 'monthly')
       .order('fiscal_year', { ascending: false })
       .order('min_income', { ascending: true });
 
@@ -90,7 +130,9 @@ export function DescontosForm({
 
     if (fetchError) return setError(fetchError.message);
     if (!data || data.length === 0) {
-      return setError('Ainda não há escalões oficiais gravados na base de dados.');
+      return setError(
+        'Ainda não há a tabela mensal oficial certa para este perfil fiscal gravada na base de dados.',
+      );
     }
 
     const typedData = data as IrsOfficialBracket[];
@@ -103,9 +145,12 @@ export function DescontosForm({
         max_income: b.max_income === null ? '' : String(b.max_income),
         rate: String(b.rate),
         deduction: String(b.deduction),
+        scale: b.scale,
+        dependent_deduction: String(b.dependent_deduction ?? 0),
       })),
     );
     setOfficialYearLoaded(latestYear);
+    setOfficialTableLoaded(tableKey);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -123,7 +168,14 @@ export function DescontosForm({
       return setError('A taxa fixa de IRS tem de estar entre 0 e 100.');
     }
 
-    let parsedBrackets: { min_income: number; max_income: number | null; rate: number; deduction: number }[] = [];
+    let parsedBrackets: {
+      min_income: number;
+      max_income: number | null;
+      rate: number;
+      deduction: number;
+      scale: IrsScale;
+      dependent_deduction: number;
+    }[] = [];
     if (irsType === 'bracket') {
       const rows = brackets.filter((r) => r.min_income.trim() !== '' || r.rate.trim() !== '');
       if (rows.length === 0) {
@@ -139,6 +191,8 @@ export function DescontosForm({
           max_income: row.max_income.trim() === '' ? null : Number(row.max_income.replace(',', '.')),
           rate,
           deduction: Number((row.deduction || '0').replace(',', '.')) || 0,
+          scale: row.scale ?? 'annual',
+          dependent_deduction: Number((row.dependent_deduction || '0').replace(',', '.')) || 0,
         });
       }
       parsedBrackets = parsedBrackets.sort((a, b) => a.min_income - b.min_income);
@@ -266,9 +320,15 @@ export function DescontosForm({
               <Button type="button" variant="outline" onClick={handleLoadOfficialBrackets} disabled={loadingOfficial}>
                 {loadingOfficial ? 'A carregar…' : 'Carregar escalões oficiais'}
               </Button>
-              {officialYearLoaded && (
+              <p className="text-xs text-muted-foreground">
+                Carrega a tabela mensal de retenção na fonte certa para o teu perfil fiscal (
+                {TABLE_LABELS[resolveTableKey(initialSettings)]}, configurado em &quot;Regime de Contrato e Perfil de
+                Admissão&quot;).
+              </p>
+              {officialYearLoaded && officialTableLoaded && (
                 <p className="text-xs text-muted-foreground">
-                  Escalões gerais de {officialYearLoaded} carregados (Continente). Confirma os valores no{' '}
+                  {TABLE_LABELS[officialTableLoaded]} de {officialYearLoaded} carregada (Continente). Confirma os
+                  valores no{' '}
                   <a
                     href="https://info.portaldasfinancas.gov.pt"
                     target="_blank"
