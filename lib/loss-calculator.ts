@@ -159,8 +159,10 @@ export function auditContractLosses(params: {
   const netOfSubsidyDeductions = (grossLoss: number): number => {
     if (grossLoss <= 0) return 0;
     const ss = grossLoss * (ssRate / 100);
-    const irsBase = Math.max(0, grossLoss - ss);
-    const irs = calculateIrs(irsBase, settings, brackets);
+    // IRS incide sobre o valor bruto, não sobre o valor já líquido de SS —
+    // mesma correção de calculateDeductions em salary-calculator.ts,
+    // confirmada com o recibo real de agosto/2026 (Ricardo, 09/09/2026).
+    const irs = calculateIrs(grossLoss, settings, brackets);
     return Math.max(0, Number((grossLoss - ss - irs).toFixed(2)));
   };
 

@@ -125,24 +125,32 @@ const bracketSettings = baseSettings({ irs_calculation_type: 'bracket' });
 const irsMensal = calculateIrs(1000, bracketSettings, officialAnnualBrackets);
 check('IRS mensal sobre 1.000€ usando escalões ANUAIS (anualizado ×14, não aplicado direto)', irsMensal, 143.48);
 
-console.log('\n--- Migração 0012: Tabela I mensal (2026) com escala explícita + dedução por dependente ---');
-// Ricardo, 09/09/2026: base tributável real ~2.223€ (2.388€ − SS de 165€),
-// casado dois titulares, 3 dependentes — validado contra o recibo real
-// (306,00€), ~1,4% de diferença por arredondamentos.
-const tableIMonthlyBrackets: IrsTaxBracket[] = [
-  { id: 't1', user_settings_id: 's', min_income: 1819, max_income: 2119, rate: 24.1, deduction: 193.33, scale: 'monthly', dependent_deduction: 21.43, created_at: '' },
-  { id: 't2', user_settings_id: 's', min_income: 2119, max_income: 2499, rate: 34.9, deduction: 401.19, scale: 'monthly', dependent_deduction: 21.43, created_at: '' },
+console.log('\n--- Migração 0012: Tabela II mensal (2026) com escala explícita + dedução por dependente ---');
+// Ricardo, 09/09/2026: recibo real de agosto/2026 (Valor sujeito a IRS:
+// 2.531,00€ = 1.500 base + 1.031 gratificação; IRS real: 393,00€). União
+// de facto sem declaração formal de agregado entregue à entidade
+// patronal ⇒ tratado como "não casado" para a tabela de retenção mensal
+// (Tabela II, não casado com dependentes — irs_marital_status='single'
+// com irs_dependents_count>0), mesmo declarando "dois titulares" na
+// declaração ANUAL de IRS. Validado a ~3% do valor real (380,36€ vs.
+// 393,00€) — diferença residual atribuída a arredondamento da "taxa
+// efetiva" que a Autoridade Tributária aplica e que esta app aproxima
+// pela fórmula de escalão (taxa × base − parcela), não pela tabela
+// prática oficial por cêntimo.
+const tableIIMonthlyBrackets: IrsTaxBracket[] = [
+  { id: 't1', user_settings_id: 's', min_income: 2119, max_income: 2499, rate: 34.9, deduction: 401.19, scale: 'monthly', dependent_deduction: 34.29, created_at: '' },
+  { id: 't2', user_settings_id: 's', min_income: 2499, max_income: 3305, rate: 38.36, deduction: 487.66, scale: 'monthly', dependent_deduction: 34.29, created_at: '' },
 ];
-const marriedTwoEarnersSettings = baseSettings({
+const singleWithDependentsSettings = baseSettings({
   irs_calculation_type: 'bracket',
-  irs_marital_status: 'married_2_earners',
+  irs_marital_status: 'single',
   irs_dependents_count: 3,
 });
-const irsTabelaI = calculateIrs(2223, marriedTwoEarnersSettings, tableIMonthlyBrackets);
+const irsTabelaII = calculateIrs(2531, singleWithDependentsSettings, tableIIMonthlyBrackets);
 check(
-  'IRS mensal sobre 2.223€ usando Tabela I (escala mensal, 3 dependentes: 2223×34,9% − 401,19 − 3×21,43)',
-  irsTabelaI,
-  310.35,
+  'IRS mensal sobre 2.531€ usando Tabela II (escala mensal, 3 dependentes: 2531×38,36% − 487,66 − 3×34,29)',
+  irsTabelaII,
+  380.36,
 );
 
 console.log('\n--- Perda líquida na auditoria de perdas (Ricardo, 04/09/2026: os descontos sobre os valores em falta têm de entrar na conta) ---');
@@ -153,12 +161,14 @@ const netLossAudit = auditContractLosses({
   brackets: officialAnnualBrackets,
 });
 // Subsídio em falta (500€ bruto): desconta SS (11% = 55€) + IRS sobre os
-// restantes 445€, anualizados ×14 (6.230€/ano) → escalão dos 12,5% da tabela
-// de teste → IRS mensal ≈ 55,63€. Líquido = 500 - 55 - 55,63 = 389,37€.
+// 500€ BRUTOS (o IRS incide sobre o bruto, não sobre o bruto já líquido de
+// SS — correção de 09/09/2026, ver comentário em netOfSubsidyDeductions),
+// anualizados ×14 (7.000€/ano) → escalão dos 12,5% da tabela de teste →
+// IRS mensal = 62,50€. Líquido = 500 - 55 - 62,50 = 382,50€.
 checkTrue('Subsídio de férias em falta: perda líquida < perda bruta', netLossAudit.subsidies.holidaySubsidyLossNet < netLossAudit.subsidies.holidaySubsidyLoss);
-check('Subsídio de férias em falta: perda líquida (500€ bruto - SS - IRS)', netLossAudit.subsidies.holidaySubsidyLossNet, 389.37);
-check('Subsídio de Natal em falta: mesma perda líquida', netLossAudit.subsidies.christmasSubsidyLossNet, 389.37);
-check('Total anual líquido nos subsídios (2× 389,37€)', netLossAudit.subsidies.totalAnnualSubsidiesLossNet, 778.74);
+check('Subsídio de férias em falta: perda líquida (500€ bruto - SS - IRS sobre o bruto)', netLossAudit.subsidies.holidaySubsidyLossNet, 382.5);
+check('Subsídio de Natal em falta: mesma perda líquida', netLossAudit.subsidies.christmasSubsidyLossNet, 382.5);
+check('Total anual líquido nos subsídios (2× 382,50€)', netLossAudit.subsidies.totalAnnualSubsidiesLossNet, 765);
 
 // Horas extras em falta (35,80€ bruto): só desconta IRS (sem SS, mesma regra
 // de ssTaxableBase), por isso a perda líquida fica mais perto da bruta do
