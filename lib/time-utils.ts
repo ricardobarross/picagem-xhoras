@@ -4,7 +4,7 @@
 // evitam `new Date("YYYY-MM-DD")` (que o JS interpreta em UTC e pode
 // deslocar um dia consoante o fuso horário) — em vez disso constroem a
 // data a partir dos componentes ano/mês/dia explícitos, em hora local.
-import type { DayCategory } from '@/types/database.types';
+import type { DayCategory, OvertimePeriodOverride } from '@/types/database.types';
 
 /** Converte uma Date para "YYYY-MM-DD" usando os componentes locais (nunca UTC). */
 export function toDateOnlyString(date: Date): string {
@@ -137,6 +137,46 @@ export function getPayPeriod(referenceDate: Date, cutoffDay: number): PayPeriod 
   const paymentDate = new Date(year, endMonth + 1, 1);
 
   return { start, end, paymentDate };
+}
+
+/**
+ * Resolve o período de apuração a usar para uma data de referência.
+ *
+ * Por defeito usa `getPayPeriod` (assume o mesmo dia de fecho nos dois
+ * lados do ciclo). Mas quando o dia de fecho muda de ciclo para ciclo —
+ * pedido por Ricardo (21/09/2026): "a empresa está a alterar os dias de
+ * fechamento da folha... se eu mudar a data de fechamento, o sistema vai
+ * buscar o ponto inicial 30 dias antes e não é isso" — essa suposição
+ * fica errada (o início calculado a partir do NOVO dia de fecho não bate
+ * com o fim do ciclo ANTERIOR, que fechou num dia diferente).
+ *
+ * `overtimeOverrides` é o histórico de períodos explícitos
+ * (overtime_period_overrides: start_date/end_date). Se existir um registo
+ * cobrindo `referenceDate`, ele substitui inteiramente o período — início
+ * e fim exatos, sem assumir nada sobre o ciclo anterior ou seguinte. Sem
+ * override para a data, cai para o `getPayPeriod` normal (comportamento
+ * inalterado para quem nunca muda o dia de fecho).
+ *
+ * Afeta o dashboard inteiro (não só horas extras) por simplicidade — mas
+ * como o salário base e os subsídios são valores fixos mensais, na
+ * prática só o cálculo de horas extras muda de facto com isto.
+ */
+export function resolvePayPeriod(
+  referenceDate: Date,
+  cutoffDay: number,
+  overtimeOverrides: OvertimePeriodOverride[] = [],
+): PayPeriod {
+  const refStr = toDateOnlyString(referenceDate);
+  const override = overtimeOverrides.find((o) => o.start_date <= refStr && refStr <= o.end_date);
+
+  if (override) {
+    const start = parseDateOnly(override.start_date);
+    const end = parseDateOnly(override.end_date);
+    const paymentDate = new Date(end.getFullYear(), end.getMonth() + 1, 1);
+    return { start, end, paymentDate };
+  }
+
+  return getPayPeriod(referenceDate, cutoffDay);
 }
 
 /** Formata "YYYY-MM-DD" como "DD/MM/YYYY". */

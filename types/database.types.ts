@@ -177,6 +177,23 @@ export type SubsidyPaymentOverride = {
   updated_at: string;
 };
 
+// Período de apuração de horas extras com data inicial/final explícitas —
+// para quando o dia de fecho da folha muda de ciclo para ciclo (ver
+// supabase/migrations/0014_*.sql). Ao cobrir a data de referência de um
+// cálculo, substitui inteiramente o período que seria derivado de
+// payroll_cutoff_day (lib/time-utils.ts::resolvePayPeriod). Histórico —
+// um registo por ciclo — para relatórios de meses passados continuarem
+// corretos mesmo que o fecho volte a mudar depois.
+export type OvertimePeriodOverride = {
+  id: string;
+  user_id: string;
+  start_date: string; // "YYYY-MM-DD"
+  end_date: string; // "YYYY-MM-DD"
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 // Um recibo de vencimento real, por mês, para comparar com o que a app
 // calcula que devia ser recebido. Todos os valores são opcionais — só se
 // preenche o que se sabe/quer comparar. file_path aponta para o PDF no
@@ -263,6 +280,12 @@ export type Database = {
         Row: PayslipReceipt;
         Insert: Partial<PayslipReceipt> & { user_id: string; reference_year: number; reference_month: number };
         Update: Partial<PayslipReceipt>;
+        Relationships: [];
+      };
+      overtime_period_overrides: {
+        Row: OvertimePeriodOverride;
+        Insert: Partial<OvertimePeriodOverride> & { user_id: string; start_date: string; end_date: string };
+        Update: Partial<OvertimePeriodOverride>;
         Relationships: [];
       };
     };

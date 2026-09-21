@@ -5,7 +5,14 @@ import { ContractSettingsForm } from '@/components/settings/ContractSettingsForm
 import { RatesForm } from '@/components/settings/RatesForm';
 import { DescontosForm } from '@/components/settings/DescontosForm';
 import { SubsidyOverridesForm } from '@/components/settings/SubsidyOverridesForm';
-import type { IrsTaxBracket, Profile, SubsidyPaymentOverride, UserSettings } from '@/types/database.types';
+import { OvertimePeriodOverridesForm } from '@/components/settings/OvertimePeriodOverridesForm';
+import type {
+  IrsTaxBracket,
+  OvertimePeriodOverride,
+  Profile,
+  SubsidyPaymentOverride,
+  UserSettings,
+} from '@/types/database.types';
 
 export default async function ConfiguracoesPage() {
   const supabase = await createClient();
@@ -47,6 +54,11 @@ export default async function ConfiguracoesPage() {
 
   const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
 
+  const { data: overtimePeriodOverrides } = await supabase
+    .from('overtime_period_overrides')
+    .select('*')
+    .eq('user_id', user.id);
+
   const isEffective = typedSettings.contract_regime === 'effective';
 
   return (
@@ -78,6 +90,15 @@ export default async function ConfiguracoesPage() {
           initialOverrides={(subsidyOverrides ?? []) as SubsidyPaymentOverride[]}
         />
       )}
+
+      {/* Histórico de períodos de apuração de horas extras com data
+          inicial/final explícitas — pra quando o dia de fecho da folha
+          muda de ciclo para ciclo. Vale para os dois regimes (o cálculo
+          de horas extras existe tanto em Efetivo quanto em Horista). */}
+      <OvertimePeriodOverridesForm
+        userId={user.id}
+        initialOverrides={(overtimePeriodOverrides ?? []) as OvertimePeriodOverride[]}
+      />
 
       {/* Formulário de Segurança Social e Escalões de IRS */}
       <DescontosForm

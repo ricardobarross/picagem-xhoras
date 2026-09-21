@@ -1,0 +1,7 @@
+﻿feat: periodo de apuracao de horas extras com historico de datas explicitas
+
+Nova tabela overtime_period_overrides (Supabase) e resolvePayPeriod() em
+lib/time-utils.ts: quando existe um periodo cadastrado cobrindo a data de
+referencia, ele substitui o calculo por "dia de fecho" (que assumia
+sempre o mesmo dia dos dois lados do ciclo, errado quando o fecho muda de
+mes para mes). Novo formulario em Configuracoes para cadastrar os periodos.

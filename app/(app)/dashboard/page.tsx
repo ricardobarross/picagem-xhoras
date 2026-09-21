@@ -5,7 +5,7 @@ import { calculatePayslip, resolveSubsidyMonths } from '@/lib/salary-calculator'
 import {
   formatHours,
   formatDatePt,
-  getPayPeriod,
+  resolvePayPeriod,
   toDateOnlyString,
   getDayCategory,
   monthNamePt,
@@ -13,7 +13,13 @@ import {
 } from '@/lib/time-utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DailyHoursChart, StackedBar, type DailyHours } from '@/components/dashboard/DashboardCharts';
-import type { IrsTaxBracket, SubsidyPaymentOverride, TimeEntry, UserSettings } from '@/types/database.types';
+import type {
+  IrsTaxBracket,
+  OvertimePeriodOverride,
+  SubsidyPaymentOverride,
+  TimeEntry,
+  UserSettings,
+} from '@/types/database.types';
 
 function euro(value: number) {
   return value.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' });
@@ -65,6 +71,15 @@ export default async function DashboardPage({
   const typedSettings = settings as UserSettings;
   const isEffective = typedSettings.contract_regime === 'effective';
 
+  // Histórico de períodos de horas extras com data inicial/final
+  // explícitas (ver lib/time-utils.ts::resolvePayPeriod) — precisa de vir
+  // antes do cálculo do período, porque pode substituí-lo inteiramente.
+  const { data: overtimePeriodOverrides } = await supabase
+    .from('overtime_period_overrides')
+    .select('*')
+    .eq('user_id', user.id);
+  const typedOvertimeOverrides = (overtimePeriodOverrides ?? []) as OvertimePeriodOverride[];
+
   // O período por defeito é o atual (a partir de hoje); ?periodo=YYYY-MM-DD
   // navega para outro período, escolhendo qualquer dia dentro dele.
   const { periodo } = await searchParams;
@@ -72,8 +87,8 @@ export default async function DashboardPage({
   const referenceDate = isValidDateParam ? new Date(`${periodo}T00:00:00`) : new Date();
   const safeReferenceDate = Number.isNaN(referenceDate.getTime()) ? new Date() : referenceDate;
 
-  const period = getPayPeriod(safeReferenceDate, typedSettings.payroll_cutoff_day);
-  const currentPeriod = getPayPeriod(new Date(), typedSettings.payroll_cutoff_day);
+  const period = resolvePayPeriod(safeReferenceDate, typedSettings.payroll_cutoff_day, typedOvertimeOverrides);
+  const currentPeriod = resolvePayPeriod(new Date(), typedSettings.payroll_cutoff_day, typedOvertimeOverrides);
   const isCurrentPeriod = samePeriod(period, currentPeriod);
 
   const periodStart = toDateOnlyString(period.start);
@@ -92,7 +107,7 @@ export default async function DashboardPage({
   const periodPresets: PayPeriod[] = [];
   let cursor = new Date(currentPeriod.start);
   for (let i = 0; i < 6; i++) {
-    const p = getPayPeriod(cursor, typedSettings.payroll_cutoff_day);
+    const p = resolvePayPeriod(cursor, typedSettings.payroll_cutoff_day, typedOvertimeOverrides);
     periodPresets.push(p);
     cursor = new Date(p.start);
     cursor.setDate(cursor.getDate() - 1);
