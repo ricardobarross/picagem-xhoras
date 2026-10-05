@@ -64,6 +64,15 @@ export type UserSettings = {
   overtime_fixed_rate: number; // Ex: 12€/h
   extra_meal_value: number; // Ex: 9.50€
 
+  // Teto mensal do subsídio de alimentação (€). 0 = sem teto. Pedido por
+  // Ricardo (09/2026): nesta empresa nunca passa de 209,50€/mês — ver
+  // migração 0015 e calculateGrossBreakdown.
+  meal_allowance_monthly_cap: number;
+  // Meta de horas extras do patrão: a cada 32h reais de horas extras no
+  // período, soma-se +8h de horas extras bónus. Desligado por defeito —
+  // checkbox porque pode ser temporário (ver migração 0015).
+  overtime_bonus_enabled: boolean;
+
   // Perfil fiscal de retenção na fonte em Portugal (Art. 99º CIRS)
   irs_marital_status: IrsMaritalStatus;
   irs_dependents_count: number;
@@ -205,6 +214,10 @@ export type PayslipReceipt = {
   reference_month: number; // 1 a 12
   received_base_salary: number | null;
   received_bonus: number | null;
+  // Prémio extra pontual (bónus avulso, distinto da Gratificação regular
+  // received_bonus) — ex.: os +150€ mencionados à parte pelo patrão. Pedido
+  // por Ricardo (09/2026), migração 0015.
+  received_bonus_extra: number | null;
   received_overtime: number | null;
   received_meal_allowance: number | null;
   received_holiday_subsidy: number | null;

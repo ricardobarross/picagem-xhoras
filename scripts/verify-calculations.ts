@@ -40,6 +40,7 @@ function baseSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     agreed_total_salary: 2000,
     overtime_fixed_rate: 12,
     extra_meal_value: 9.5,
+    overtime_bonus_enabled: false,
     irs_marital_status: 'single',
     irs_dependents_count: 0,
     irs_has_disability: false,
@@ -52,6 +53,7 @@ function baseSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     sunday_multiplier: 2,
     payroll_cutoff_day: 20,
     meal_allowance_daily_value: 6,
+    meal_allowance_monthly_cap: 0,
     meal_allowance_payment_method: 'card',
     meal_allowance_taxable: false,
     bonus_payment_type: 'monthly_installments',
@@ -265,6 +267,81 @@ check('Bruto de uma conta não configurada é 0€ (nunca 1.500€/2.000€ de o
 const unconfiguredAudit = auditContractLosses({ settings: unconfiguredSettings, overtimeHours: 10, extraMealsCount: 4 });
 check('Auditoria de perdas de uma conta não configurada não usa 2.000€ de outra conta', unconfiguredAudit.agreedRealSalary, 0);
 check('Percentagem de perda em indemnização não é NaN quando agreedRealSalary=0', unconfiguredAudit.severance.lossPercentage, 0);
+
+console.log('\n--- Migração 0015: teto do subsídio de alimentação (Ricardo, 09/2026: nunca passa de 209,50€/mês) ---');
+const mealCapSettings = baseSettings({ meal_allowance_daily_value: 10, meal_allowance_monthly_cap: 209.5 });
+const mealCapPayslip = calculatePayslip({
+  entries: Array.from({ length: 25 }, (_, i) => ({
+    id: `mc${i}`,
+    user_id: 'u',
+    entry_date: `2026-02-${String(i + 1).padStart(2, '0')}`,
+    entry_type: 'work' as const,
+    hours_worked: 8,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  })),
+  settings: mealCapSettings,
+});
+check(
+  '25 dias × 10€/dia (250€) fica limitado ao teto de 209,50€',
+  mealCapPayslip.gross.mealAllowance,
+  209.5,
+);
+const mealNoCapSettings = baseSettings({ meal_allowance_daily_value: 10, meal_allowance_monthly_cap: 0 });
+const mealNoCapPayslip = calculatePayslip({
+  entries: Array.from({ length: 25 }, (_, i) => ({
+    id: `mnc${i}`,
+    user_id: 'u',
+    entry_date: `2026-02-${String(i + 1).padStart(2, '0')}`,
+    entry_type: 'work' as const,
+    hours_worked: 8,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  })),
+  settings: mealNoCapSettings,
+});
+check('Teto a 0€ = sem teto (comportamento inalterado): 25×10€ = 250€', mealNoCapPayslip.gross.mealAllowance, 250);
+
+console.log('\n--- Migração 0015: refeição extra conta 1 por DIA com horas extra reais, não horas/3 ---');
+const extraMealEntries: TimeEntry[] = [
+  // Sábado trabalhado (hoje tudo conta como extra) — 1 dia
+  { id: 'em1', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 6, notes: null, created_at: '', updated_at: '' },
+  // Dia útil prolongado (8h normais + 1h extra) — 1 dia
+  { id: 'em2', user_id: 'u', entry_date: '2026-02-09', entry_type: 'work', hours_worked: 9, notes: null, created_at: '', updated_at: '' },
+  // Dia útil normal, sem extra — não conta
+  { id: 'em3', user_id: 'u', entry_date: '2026-02-10', entry_type: 'work', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
+];
+const extraMealHours = calculateHoursBreakdown(extraMealEntries);
+check('2 dias distintos com horas extra reais (sábado + dia útil prolongado)', extraMealHours.overtimeDays, 2);
+const extraMealSettings = baseSettings({ extra_meal_value: 9.5, overtime_fixed_rate: 12 });
+const extraMealPayslip = calculatePayslip({ entries: extraMealEntries, settings: extraMealSettings });
+check(
+  'extraMealsIncome = 2 dias × 9,50€ = 19€ (não horas-extra÷3)',
+  extraMealPayslip.gross.extraMealsIncome,
+  19,
+);
+
+console.log('\n--- Migração 0015: meta de horas extras do patrão (a cada 32h reais, +8h bónus), com checkbox ---');
+// 2026-02-07 é um sábado — todas as horas contam como extra (ver
+// calculateHoursBreakdown), simples e inequívoco para somar 40h extra num só registo.
+const singleDayOvertimeEntries: TimeEntry[] = [
+  { id: 'ob-single', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 40, notes: null, created_at: '', updated_at: '' },
+];
+const overtimeBonusOffSettings = baseSettings({ overtime_fixed_rate: 12, overtime_bonus_enabled: false });
+const overtimeBonusOffPayslip = calculatePayslip({ entries: singleDayOvertimeEntries, settings: overtimeBonusOffSettings });
+check('Checkbox desligado: 40h extra (sábado) × 12€ = 480€, sem bónus', overtimeBonusOffPayslip.gross.overtimeIncome, 480);
+check('Checkbox desligado: overtimeBonusHours = 0', overtimeBonusOffPayslip.gross.overtimeBonusHours, 0);
+
+const overtimeBonusOnSettings = baseSettings({ overtime_fixed_rate: 12, overtime_bonus_enabled: true });
+const overtimeBonusOnPayslip = calculatePayslip({ entries: singleDayOvertimeEntries, settings: overtimeBonusOnSettings });
+check('Checkbox ligado: 40h reais ÷ 32 = 1 meta atingida → +8h bónus', overtimeBonusOnPayslip.gross.overtimeBonusHours, 8);
+check(
+  'Checkbox ligado: (40h reais + 8h bónus) × 12€ = 576€',
+  overtimeBonusOnPayslip.gross.overtimeIncome,
+  576,
+);
 
 console.log(`\n${failures === 0 ? '✅ Todos os testes passaram.' : `❌ ${failures} teste(s) falharam.`}`);
 process.exitCode = failures === 0 ? 0 : 1;

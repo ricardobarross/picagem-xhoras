@@ -25,6 +25,11 @@ export interface HoursBreakdown {
   total: number;
   standardHours: number; // Horas dentro do horário normal (até 8h/dia útil)
   overtimeHours: number; // Horas além das 8h, em fim de semana, ou em feriado
+  // Nº de dias distintos com horas extras reais (dia útil prolongado além
+  // das 8h, ou qualquer hora em fim de semana/feriado) — usado para a
+  // refeição extra (1 por dia com horas extra, não 1 por cada 3h extra).
+  // Pedido por Ricardo (09/2026).
+  overtimeDays: number;
 }
 
 export interface AbsencesBreakdown {
@@ -65,6 +70,11 @@ export interface GrossBreakdown {
   baseSalary: number;
   fixedBonus: number;
   overtimeIncome: number;
+  // Horas de bónus incluídas em overtimeIncome por via da meta do patrão
+  // (a cada 32h reais de horas extras, +8h bónus) — só quando
+  // settings.overtime_bonus_enabled está ligado; 0 no regime horista ou
+  // quando desligado. Pedido por Ricardo (09/2026), migração 0015.
+  overtimeBonusHours: number;
   extraMealsIncome: number;
   holidaySubsidy: number;
   christmasSubsidy: number;
@@ -111,7 +121,10 @@ export function calculateHoursBreakdown(entries: TimeEntry[]): HoursBreakdown {
     total: 0,
     standardHours: 0,
     overtimeHours: 0,
+    overtimeDays: 0,
   };
+
+  const overtimeDaysSet = new Set<string>();
 
   for (const entry of entries) {
     // Faltas/baixa/falta justificada não são horas trabalhadas — são
@@ -127,11 +140,15 @@ export function calculateHoursBreakdown(entries: TimeEntry[]): HoursBreakdown {
       const extra = Math.max(0, hoursWorked - 8);
       breakdown.standardHours += normal;
       breakdown.overtimeHours += extra;
+      if (extra > 0) overtimeDaysSet.add(entry.entry_date);
     } else {
       // Fim de semana e feriados contam como horas extra / suplementares no regime padrão
       breakdown.overtimeHours += hoursWorked;
+      if (hoursWorked > 0) overtimeDaysSet.add(entry.entry_date);
     }
   }
+
+  breakdown.overtimeDays = overtimeDaysSet.size;
 
   return breakdown;
 }
@@ -200,8 +217,13 @@ export function calculateGrossBreakdown(
 ): GrossBreakdown {
   const isEffective = settings.contract_regime === 'effective';
 
-  // Subsídios de transporte e alimentação padrão
-  const mealAllowance = settings.meal_allowance_daily_value * daysWorkedInPeriod;
+  // Subsídios de transporte e alimentação padrão. O subsídio de
+  // alimentação tem um teto mensal opcional (0 = sem teto, comportamento
+  // inalterado) — pedido por Ricardo (09/2026): nesta empresa nunca passa
+  // de 209,50€/mês, independentemente de quantos dias se trabalhe.
+  const rawMealAllowance = settings.meal_allowance_daily_value * daysWorkedInPeriod;
+  const mealAllowanceCap = settings.meal_allowance_monthly_cap || 0;
+  const mealAllowance = mealAllowanceCap > 0 ? Math.min(rawMealAllowance, mealAllowanceCap) : rawMealAllowance;
   const transportAllowance =
     settings.transport_allowance_frequency === 'daily'
       ? settings.transport_allowance_value * daysWorkedInPeriod
@@ -215,12 +237,23 @@ export function calculateGrossBreakdown(
     const baseSalary = settings.base_salary || 0;
     const fixedBonus = settings.fixed_bonus || 0;
     const overtimeRate = settings.overtime_fixed_rate || 0;
-    const overtimeIncome = hours.overtimeHours * overtimeRate;
 
-    // Refeições extras estimadas: 1 por dia com mais de 2h extras ou fins de semana trabalhados
+    // Meta de horas extras do patrão: a cada 32h reais de horas extras no
+    // período, soma-se +8h de horas extras bónus — opcional (checkbox),
+    // porque pode ser temporário. Pedido por Ricardo (09/2026), migração 0015.
+    const overtimeBonusHours = settings.overtime_bonus_enabled
+      ? Math.floor(hours.overtimeHours / 32) * 8
+      : 0;
+    const effectiveOvertimeHours = hours.overtimeHours + overtimeBonusHours;
+    const overtimeIncome = effectiveOvertimeHours * overtimeRate;
+
+    // Refeições extras: 1 por dia com horas extras reais (dia útil
+    // prolongado, fim de semana ou feriado trabalhado) — não pelas horas
+    // bónus do patrão, que não correspondem a um dia de trabalho real.
+    // Entra sempre como "Prémio" (totalBonusAndExtras), nunca como
+    // "Alimentação" — pedido por Ricardo (09/2026).
     const extraMealValue = settings.extra_meal_value || 0;
-    // Considera refeições extras se houver horas suplementares significativas
-    const estimatedExtraMeals = Math.floor(hours.overtimeHours / 3);
+    const estimatedExtraMeals = hours.overtimeDays;
     const extraMealsIncome = estimatedExtraMeals * extraMealValue;
 
     // Subsídios de Férias e Natal se o mês coincidir
@@ -281,6 +314,7 @@ export function calculateGrossBreakdown(
       baseSalary,
       fixedBonus,
       overtimeIncome,
+      overtimeBonusHours,
       extraMealsIncome,
       holidaySubsidy,
       christmasSubsidy,
@@ -336,6 +370,7 @@ export function calculateGrossBreakdown(
     baseSalary: 0,
     fixedBonus: 0,
     overtimeIncome: 0,
+    overtimeBonusHours: 0,
     extraMealsIncome: 0,
     holidaySubsidy: 0,
     christmasSubsidy: 0,

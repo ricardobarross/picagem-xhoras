@@ -64,6 +64,9 @@ export function ContractSettingsForm({
   const [extraMealValue, setExtraMealValue] = useState(
     String(initialSettings.extra_meal_value ?? 0),
   );
+  const [overtimeBonusEnabled, setOvertimeBonusEnabled] = useState<boolean>(
+    initialSettings.overtime_bonus_enabled ?? false,
+  );
 
   // Perfil Fiscal (Art. 99º CIRS)
   const [maritalStatus, setMaritalStatus] = useState<IrsMaritalStatus>(
@@ -96,6 +99,9 @@ export function ContractSettingsForm({
   );
   const [mealPaymentMethod, setMealPaymentMethod] = useState<PaymentMethod>(
     initialSettings.meal_allowance_payment_method || 'card',
+  );
+  const [mealAllowanceCap, setMealAllowanceCap] = useState(
+    String(initialSettings.meal_allowance_monthly_cap ?? 0),
   );
 
   // Subsídio de Transporte
@@ -130,6 +136,7 @@ export function ContractSettingsForm({
     const extraMeal = isEffective ? Number(extraMealValue.replace(',', '.')) || 0 : 0;
     const deps = parseInt(dependentsCount, 10) || 0;
     const mealVal = Number(mealDailyValue.replace(',', '.')) || 0;
+    const mealCap = Number(mealAllowanceCap.replace(',', '.')) || 0;
     const transportVal = Number(transportValue.replace(',', '.')) || 0;
     const cutoff = parseInt(cutoffDay, 10) || 20;
 
@@ -146,6 +153,7 @@ export function ContractSettingsForm({
         agreed_total_salary: agreed,
         overtime_fixed_rate: otRate,
         extra_meal_value: extraMeal,
+        overtime_bonus_enabled: isEffective ? overtimeBonusEnabled : false,
         irs_marital_status: maritalStatus,
         irs_dependents_count: deps,
         irs_has_disability: hasDisability,
@@ -154,6 +162,7 @@ export function ContractSettingsForm({
         christmas_subsidy_month: christmasMonth,
         subsidy_mode: subsidyMode,
         meal_allowance_daily_value: mealVal,
+        meal_allowance_monthly_cap: mealCap,
         meal_allowance_payment_method: mealPaymentMethod,
         transport_allowance_value: transportVal,
         transport_allowance_frequency: transportFrequency,
@@ -330,6 +339,21 @@ export function ContractSettingsForm({
                     </span>
                   </div>
                 </div>
+
+                <div className="mt-4 flex items-center gap-2 rounded-md border border-dashed border-input p-3">
+                  <input
+                    type="checkbox"
+                    id="overtimeBonusEnabled"
+                    checked={overtimeBonusEnabled}
+                    onChange={(e) => setOvertimeBonusEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <label htmlFor="overtimeBonusEnabled" className="text-xs cursor-pointer">
+                    <span className="font-medium">Meta de horas extras do patrão:</span> a cada 32h reais de horas
+                    extras no período, soma +8h de horas extras bónus.{' '}
+                    <span className="text-muted-foreground">(Pode ser temporária — desliga quando deixar de se aplicar.)</span>
+                  </label>
+                </div>
               </div>
             </>
           )}
@@ -486,6 +510,23 @@ export function ContractSettingsForm({
                   <option value="card">Cartão de Refeição (isento até 10,20€/dia)</option>
                   <option value="cash">Dinheiro / Na Folha (isento até 6,00€/dia)</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Teto Mensal do Subsídio (€)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={mealAllowanceCap}
+                  onChange={(e) => setMealAllowanceCap(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  placeholder="0,00 (0 = sem teto)"
+                />
+                <span className="text-[11px] text-muted-foreground">
+                  Ex.: 209,50€ — deixa 0 se a empresa não tiver um teto mensal fixo
+                </span>
               </div>
             </div>
           </div>

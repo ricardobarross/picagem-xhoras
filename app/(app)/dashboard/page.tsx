@@ -449,6 +449,11 @@ export default async function DashboardPage({
             Horas extras:{' '}
             <strong className="text-primary">{formatHours(payslip.hours.overtimeHours)}</strong>
           </p>
+          {payslip.gross.overtimeBonusHours > 0 && (
+            <p className="col-span-2 text-xs text-muted-foreground sm:col-span-4">
+              Inclui +{formatHours(payslip.gross.overtimeBonusHours)} de bónus do patrão (meta: a cada 32h reais, +8h)
+            </p>
+          )}
         </CardContent>
       </Card>
 

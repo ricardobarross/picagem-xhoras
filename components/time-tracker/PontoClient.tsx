@@ -14,7 +14,7 @@ import { createClient } from '@/lib/supabase/client';
 import type { TimeEntry, TimeEntryType } from '@/types/database.types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { toDateOnlyString, formatDatePt } from '@/lib/time-utils';
+import { toDateOnlyString, formatDatePt, isPortugueseHoliday } from '@/lib/time-utils';
 
 const WEEKDAY_HEADERS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 const MONTH_NAMES = [
@@ -349,6 +349,12 @@ export function PontoClient({
             {grid.map((cell) => {
               const dayOfWeek = cell.date.getDay(); // 0 = domingo, 6 = sábado
               const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+              // Feriado obrigatório que cai em dia útil — entra como hora
+              // extra se trabalhado (ver getDayCategory/calculateHoursBreakdown
+              // em lib/time-utils.ts e lib/salary-calculator.ts). Só se marca
+              // aqui quando NÃO é já fim de semana, para não duplicar o
+              // destaque visual. Pedido por Ricardo (05/10/2026).
+              const isHoliday = !isWeekend && isPortugueseHoliday(cell.dateStr);
               const entry = entriesMap[cell.dateStr];
               const isSelected = selectedDate === cell.dateStr;
               const isToday = cell.dateStr === todayStr;
@@ -358,20 +364,24 @@ export function PontoClient({
                 <button
                   key={cell.dateStr}
                   onClick={() => handleSelectDay(cell.dateStr)}
+                  title={isHoliday ? 'Feriado — se trabalhado, conta como hora extra' : undefined}
                   className={[
                     'flex aspect-square flex-col items-center justify-center rounded-md border text-xs transition-colors',
                     cell.inMonth ? '' : 'opacity-30',
                     isSelected ? 'border-primary ring-2 ring-ring' : 'border-border',
                     isToday ? 'font-semibold' : '',
                     isWeekend && !config ? 'bg-muted/50' : '',
+                    isHoliday && !config ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/40' : '',
                     config ? config.badgeClass : '',
                   ].join(' ')}
                 >
                   <span>{cell.date.getDate()}</span>
-                  {config && (
+                  {config ? (
                     <span className="text-[10px]">
                       {TYPES_WITH_HOURS.includes(entry!.type) ? `${entry!.hours}${config.shortLabel}` : config.shortLabel}
                     </span>
+                  ) : (
+                    isHoliday && <span className="text-[9px] text-amber-700 dark:text-amber-400">Feriado</span>
                   )}
                 </button>
               );

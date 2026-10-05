@@ -54,6 +54,7 @@ const SELECT_CLASS = 'rounded-md border border-input bg-background px-2 py-1.5 t
 type ReceiptFormState = {
   received_base_salary: string;
   received_bonus: string;
+  received_bonus_extra: string;
   received_overtime: string;
   received_meal_allowance: string;
   received_holiday_subsidy: string;
@@ -67,6 +68,7 @@ type ReceiptFormState = {
 const EMPTY_FORM: ReceiptFormState = {
   received_base_salary: '',
   received_bonus: '',
+  received_bonus_extra: '',
   received_overtime: '',
   received_meal_allowance: '',
   received_holiday_subsidy: '',
@@ -80,6 +82,7 @@ const EMPTY_FORM: ReceiptFormState = {
 const RECEIPT_FIELDS: { key: keyof ReceiptFormState; label: string }[] = [
   { key: 'received_base_salary', label: 'Vencimento Base' },
   { key: 'received_bonus', label: 'Gratificação / Prémio' },
+  { key: 'received_bonus_extra', label: 'Prémio Extra Pontual' },
   { key: 'received_overtime', label: 'Horas Extras' },
   { key: 'received_meal_allowance', label: 'Subsídio de Alimentação' },
   { key: 'received_holiday_subsidy', label: 'Subsídio de Férias' },
@@ -100,6 +103,7 @@ function formStateFromReceipt(receipt: PayslipReceipt | null): ReceiptFormState 
   return {
     received_base_salary: receipt.received_base_salary?.toString() ?? '',
     received_bonus: receipt.received_bonus?.toString() ?? '',
+    received_bonus_extra: receipt.received_bonus_extra?.toString() ?? '',
     received_overtime: receipt.received_overtime?.toString() ?? '',
     received_meal_allowance: receipt.received_meal_allowance?.toString() ?? '',
     received_holiday_subsidy: receipt.received_holiday_subsidy?.toString() ?? '',
@@ -208,6 +212,7 @@ function ReceiptForm({
         reference_month: month,
         received_base_salary: toNumberOrNull(form.received_base_salary),
         received_bonus: toNumberOrNull(form.received_bonus),
+        received_bonus_extra: toNumberOrNull(form.received_bonus_extra),
         received_overtime: toNumberOrNull(form.received_overtime),
         received_meal_allowance: toNumberOrNull(form.received_meal_allowance),
         received_holiday_subsidy: toNumberOrNull(form.received_holiday_subsidy),
@@ -349,6 +354,10 @@ function ReceiptForm({
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
               <span className="text-muted-foreground">
                 Gratificação/Prémio: <span className="text-foreground">{euro(toNumberOrNull(form.received_bonus))}</span>
+              </span>
+              <span className="text-muted-foreground">
+                Prémio Extra Pontual:{' '}
+                <span className="text-foreground">{euro(toNumberOrNull(form.received_bonus_extra))}</span>
               </span>
               <span className="text-muted-foreground">
                 Horas Extras: <span className="text-foreground">{euro(toNumberOrNull(form.received_overtime))}</span>
