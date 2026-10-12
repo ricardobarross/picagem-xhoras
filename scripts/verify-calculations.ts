@@ -90,7 +90,7 @@ checkTrue('getDayCategory("2028-04-25") === "holiday" (terça-feira)', getDayCat
 console.log('\n--- Regime horista: feriado paga como domingo (Art. 269º CT), não como dia normal ---');
 const hourlySettings = baseSettings({ contract_regime: 'hourly', weekday_rate: 10, sunday_multiplier: 2 });
 const holidayEntry: TimeEntry[] = [
-  { id: '1', user_id: 'u', entry_date: '2028-04-25', entry_type: 'work', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
+  { id: '1', user_id: 'u', entry_date: '2028-04-25', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const holidayHours = calculateHoursBreakdown(holidayEntry);
 check('8h no feriado são contabilizadas em hours.holiday', holidayHours.holiday, 8);
@@ -220,27 +220,27 @@ console.log('\n--- Faltas/Baixa no regime efetivo (calibrado com os recibos reai
 const absenceSettings = baseSettings({ base_salary: 1250, fixed_bonus: 650.15 });
 
 const mayAbsenceEntries: TimeEntry[] = [
-  { id: 'a1', user_id: 'u', entry_date: '2025-05-15', entry_type: 'unjustified_absence', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
+  { id: 'a1', user_id: 'u', entry_date: '2025-05-15', entry_type: 'unjustified_absence', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const mayPayslip = calculatePayslip({ entries: mayAbsenceEntries, settings: absenceSettings });
 check('Valor/hora legal de falta (1.250×12/2080, arredondado) é 7,21€, igual ao recibo real', Number((((1250 * 12) / 2080)).toFixed(2)), 7.21);
 check('Recibo real de maio/2025: 8h de falta injustificada descontam 57,68€ (não 57,69€)', mayPayslip.gross.unjustifiedAbsenceDeduction, 57.68);
 
 const julyAbsenceEntries: TimeEntry[] = [
-  { id: 'a2', user_id: 'u', entry_date: '2025-07-10', entry_type: 'unjustified_absence', hours_worked: 13, notes: null, created_at: '', updated_at: '' },
+  { id: 'a2', user_id: 'u', entry_date: '2025-07-10', entry_type: 'unjustified_absence', hours_worked: 13, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const julyPayslip = calculatePayslip({ entries: julyAbsenceEntries, settings: absenceSettings });
 check('Recibo real de julho/2025: 13h de falta injustificada descontam 93,73€', julyPayslip.gross.unjustifiedAbsenceDeduction, 93.73);
 
 const septemberAbsenceEntries: TimeEntry[] = [
-  { id: 'a3', user_id: 'u', entry_date: '2025-09-05', entry_type: 'sick_leave', hours_worked: null, notes: null, created_at: '', updated_at: '' },
+  { id: 'a3', user_id: 'u', entry_date: '2025-09-05', entry_type: 'sick_leave', hours_worked: null, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const septemberPayslip = calculatePayslip({ entries: septemberAbsenceEntries, settings: absenceSettings });
 check('Recibo real de setembro/2025: 1 dia de baixa desconta 41,67€ (1.250€/30)', septemberPayslip.gross.sickLeaveDeduction, 41.67);
 check('A baixa reduz também a base de SS (1.250 - 41,67 = 1.208,33€, igual ao recibo real)', septemberPayslip.gross.ssTaxableBase, 1208.33);
 
 const justifiedEntries: TimeEntry[] = [
-  { id: 'a4', user_id: 'u', entry_date: '2025-06-02', entry_type: 'justified_absence', hours_worked: null, notes: null, created_at: '', updated_at: '' },
+  { id: 'a4', user_id: 'u', entry_date: '2025-06-02', entry_type: 'justified_absence', hours_worked: null, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const justifiedPayslip = calculatePayslip({ entries: justifiedEntries, settings: absenceSettings });
 checkTrue(
@@ -277,6 +277,7 @@ const mealCapPayslip = calculatePayslip({
     entry_date: `2026-02-${String(i + 1).padStart(2, '0')}`,
     entry_type: 'work' as const,
     hours_worked: 8,
+    unjustified_absence_hours: 0,
     notes: null,
     created_at: '',
     updated_at: '',
@@ -296,6 +297,7 @@ const mealNoCapPayslip = calculatePayslip({
     entry_date: `2026-02-${String(i + 1).padStart(2, '0')}`,
     entry_type: 'work' as const,
     hours_worked: 8,
+    unjustified_absence_hours: 0,
     notes: null,
     created_at: '',
     updated_at: '',
@@ -307,11 +309,11 @@ check('Teto a 0€ = sem teto (comportamento inalterado): 25×10€ = 250€', m
 console.log('\n--- Migração 0015: refeição extra conta 1 por DIA com horas extra reais, não horas/3 ---');
 const extraMealEntries: TimeEntry[] = [
   // Sábado trabalhado (hoje tudo conta como extra) — 1 dia
-  { id: 'em1', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 6, notes: null, created_at: '', updated_at: '' },
+  { id: 'em1', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 6, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
   // Dia útil prolongado (8h normais + 1h extra) — 1 dia
-  { id: 'em2', user_id: 'u', entry_date: '2026-02-09', entry_type: 'work', hours_worked: 9, notes: null, created_at: '', updated_at: '' },
+  { id: 'em2', user_id: 'u', entry_date: '2026-02-09', entry_type: 'work', hours_worked: 9, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
   // Dia útil normal, sem extra — não conta
-  { id: 'em3', user_id: 'u', entry_date: '2026-02-10', entry_type: 'work', hours_worked: 8, notes: null, created_at: '', updated_at: '' },
+  { id: 'em3', user_id: 'u', entry_date: '2026-02-10', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const extraMealHours = calculateHoursBreakdown(extraMealEntries);
 check('2 dias distintos com horas extra reais (sábado + dia útil prolongado)', extraMealHours.overtimeDays, 2);
@@ -327,7 +329,7 @@ console.log('\n--- Migração 0015: meta de horas extras do patrão (a cada 32h 
 // 2026-02-07 é um sábado — todas as horas contam como extra (ver
 // calculateHoursBreakdown), simples e inequívoco para somar 40h extra num só registo.
 const singleDayOvertimeEntries: TimeEntry[] = [
-  { id: 'ob-single', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 40, notes: null, created_at: '', updated_at: '' },
+  { id: 'ob-single', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 40, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const overtimeBonusOffSettings = baseSettings({ overtime_fixed_rate: 12, overtime_bonus_enabled: false });
 const overtimeBonusOffPayslip = calculatePayslip({ entries: singleDayOvertimeEntries, settings: overtimeBonusOffSettings });
@@ -341,6 +343,52 @@ check(
   'Checkbox ligado: (40h reais + 8h bónus) × 12€ = 576€',
   overtimeBonusOnPayslip.gross.overtimeIncome,
   576,
+);
+
+console.log('\n--- Migração 0016: horas em falta sem justificação dentro de um dia de trabalho (Ricardo, 12/10/2026: saiu às 12h30 na sexta 09/10) ---');
+const partialAbsenceSettings = baseSettings({ base_salary: 1500 });
+const partialAbsenceEntries: TimeEntry[] = [
+  // Trabalhou 4h e faltaram-lhe 3,5h sem justificação nesse mesmo dia —
+  // ao contrário de entry_type 'unjustified_absence' (dia inteiro de
+  // falta), aqui coexistem hours_worked e unjustified_absence_hours no
+  // mesmo registo 'work'.
+  {
+    id: 'pa1',
+    user_id: 'u',
+    entry_date: '2026-10-09',
+    entry_type: 'work',
+    hours_worked: 4,
+    unjustified_absence_hours: 3.5,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  },
+];
+const partialAbsencePayslip = calculatePayslip({ entries: partialAbsenceEntries, settings: partialAbsenceSettings });
+check(
+  'calculateAbsencesBreakdown soma as horas em falta de um dia parcialmente trabalhado',
+  calculateAbsencesBreakdown(partialAbsenceEntries).unjustifiedAbsenceHours,
+  3.5,
+);
+check(
+  '3,5h em falta × 8,65€/h (1.500×12/2080) descontam 30,28€ do Vencimento Base',
+  partialAbsencePayslip.gross.unjustifiedAbsenceDeduction,
+  30.28,
+);
+check(
+  'As 4h trabalhadas continuam a contar normalmente nas horas do dia (standardHours)',
+  calculateHoursBreakdown(partialAbsenceEntries).standardHours,
+  4,
+);
+
+// Um dia inteiro de falta injustificada (entry_type dedicado) e um dia
+// parcial (unjustified_absence_hours num registo 'work') têm de somar sem
+// se duplicarem nem se anularem.
+const mixedAbsenceEntries: TimeEntry[] = [...mayAbsenceEntries, ...partialAbsenceEntries];
+check(
+  'Falta de dia inteiro (8h) + falta parcial (3,5h) somam 11,5h, sem duplicar',
+  calculateAbsencesBreakdown(mixedAbsenceEntries).unjustifiedAbsenceHours,
+  11.5,
 );
 
 console.log(`\n${failures === 0 ? '✅ Todos os testes passaram.' : `❌ ${failures} teste(s) falharam.`}`);

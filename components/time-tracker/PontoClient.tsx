@@ -52,6 +52,11 @@ const TYPE_CONFIG: Record<TimeEntryType, { label: string; shortLabel: string; ba
 interface DayEntry {
   type: TimeEntryType;
   hours: number; // só relevante para os tipos em TYPES_WITH_HOURS
+  // Horas em falta sem justificação dentro de um dia de trabalho normal
+  // (ex: saiu mais cedo) — só faz sentido quando type === 'work'. Coexiste
+  // com `hours`, ao contrário de type === 'unjustified_absence' que marca
+  // o dia inteiro como falta. Pedido por Ricardo (12/10/2026).
+  absenceHours: number;
 }
 
 interface DayCell {
@@ -83,7 +88,11 @@ function buildMonthGrid(year: number, month: number): DayCell[] {
 }
 
 function entryToDayEntry(e: TimeEntry): DayEntry {
-  return { type: e.entry_type ?? 'work', hours: e.hours_worked ?? 0 };
+  return {
+    type: e.entry_type ?? 'work',
+    hours: e.hours_worked ?? 0,
+    absenceHours: e.unjustified_absence_hours ?? 0,
+  };
 }
 
 export function PontoClient({
@@ -117,6 +126,7 @@ export function PontoClient({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [editType, setEditType] = useState<TimeEntryType>('work');
   const [editValue, setEditValue] = useState('');
+  const [editAbsenceValue, setEditAbsenceValue] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,12 +174,13 @@ export function PontoClient({
 
   // hours só é usado (e obrigatório > 0) para os tipos em TYPES_WITH_HOURS;
   // para sick_leave/justified_absence cada registo é sempre um dia inteiro.
-  async function upsertEntry(dateStr: string, type: TimeEntryType, hours: number) {
+  async function upsertEntry(dateStr: string, type: TimeEntryType, hours: number, absenceHours: number = 0) {
     setError(null);
     const needsHours = TYPES_WITH_HOURS.includes(type);
+    const effectiveAbsenceHours = type === 'work' ? absenceHours : 0;
 
-    if (needsHours && hours <= 0) {
-      // 0 horas = remover o registo desse dia
+    if (needsHours && hours <= 0 && effectiveAbsenceHours <= 0) {
+      // 0 horas (e sem horas em falta, se for trabalho) = remover o registo desse dia
       const { error: deleteError } = await supabase
         .from('time_entries')
         .delete()
@@ -190,11 +201,15 @@ export function PontoClient({
         entry_date: dateStr,
         entry_type: type,
         hours_worked: needsHours ? hours : null,
+        unjustified_absence_hours: effectiveAbsenceHours,
       },
       { onConflict: 'user_id,entry_date' },
     );
     if (upsertError) throw new Error(upsertError.message);
-    setEntriesMap((prev) => ({ ...prev, [dateStr]: { type, hours: needsHours ? hours : 0 } }));
+    setEntriesMap((prev) => ({
+      ...prev,
+      [dateStr]: { type, hours: needsHours ? hours : 0, absenceHours: effectiveAbsenceHours },
+    }));
   }
 
   async function removeEntry(dateStr: string) {
@@ -220,7 +235,8 @@ export function PontoClient({
     setTodaySaving(true);
     setTodaySaved(false);
     try {
-      await upsertEntry(todayStr, 'work', hours);
+      const existingAbsenceHours = entriesMap[todayStr]?.type === 'work' ? entriesMap[todayStr].absenceHours : 0;
+      await upsertEntry(todayStr, 'work', hours, existingAbsenceHours);
       setTodaySaved(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao guardar.');
@@ -234,6 +250,7 @@ export function PontoClient({
     const existing = entriesMap[dateStr];
     setEditType(existing?.type ?? 'work');
     setEditValue(existing && existing.hours > 0 ? String(existing.hours) : '');
+    setEditAbsenceValue(existing && existing.absenceHours > 0 ? String(existing.absenceHours) : '');
     setError(null);
   }
 
@@ -241,17 +258,22 @@ export function PontoClient({
     if (!selectedDate) return;
     const needsHours = TYPES_WITH_HOURS.includes(editType);
     const hours = editValue.trim() === '' ? 0 : Number(editValue.replace(',', '.'));
+    const absenceHours =
+      editType === 'work' && editAbsenceValue.trim() !== '' ? Number(editAbsenceValue.replace(',', '.')) : 0;
 
     if (needsHours) {
       if (Number.isNaN(hours) || hours < 0 || hours > 24) {
         return setError('Introduz um número de horas válido (0 a 24).');
       }
     }
+    if (editType === 'work' && (Number.isNaN(absenceHours) || absenceHours < 0 || absenceHours > 24)) {
+      return setError('Introduz um número de horas em falta válido (0 a 24).');
+    }
 
     setEditSaving(true);
     try {
       if (needsHours) {
-        await upsertEntry(selectedDate, editType, hours);
+        await upsertEntry(selectedDate, editType, hours, absenceHours);
         if (selectedDate === todayStr && editType === 'work') {
           setTodayInput(hours > 0 ? String(hours) : '');
         }
@@ -379,6 +401,7 @@ export function PontoClient({
                   {config ? (
                     <span className="text-[10px]">
                       {TYPES_WITH_HOURS.includes(entry!.type) ? `${entry!.hours}${config.shortLabel}` : config.shortLabel}
+                      {entry!.type === 'work' && entry!.absenceHours > 0 ? ` -${entry!.absenceHours}h` : ''}
                     </span>
                   ) : (
                     isHoliday && <span className="text-[9px] text-amber-700 dark:text-amber-400">Feriado</span>
@@ -441,6 +464,24 @@ export function PontoClient({
                   Cancelar
                 </Button>
               </div>
+
+              {editType === 'work' && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground">
+                    Horas em falta sem justificação nesse dia (ex.: saiu mais cedo):
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={24}
+                    step={0.5}
+                    placeholder="ex.: 3,5"
+                    value={editAbsenceValue}
+                    onChange={(e) => setEditAbsenceValue(e.target.value)}
+                    className="w-28 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
             </div>
           )}
 

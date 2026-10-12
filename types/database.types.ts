@@ -163,6 +163,11 @@ export type TimeEntry = {
   // Obrigatório para 'work'/'unjustified_absence' (horas); null/ignorado
   // para 'sick_leave'/'justified_absence' (um registo = um dia inteiro).
   hours_worked: number | null;
+  // Horas em falta sem justificação dentro de um dia normalmente
+  // trabalhado (entry_type === 'work') — ex: saiu mais cedo, chegou
+  // atrasado. Coexiste com hours_worked; default 0
+  // (supabase/migrations/0016_*.sql). Pedido por Ricardo (12/10/2026).
+  unjustified_absence_hours: number;
   notes: string | null;
   created_at: string;
   updated_at: string;

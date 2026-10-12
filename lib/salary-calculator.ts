@@ -172,6 +172,12 @@ export function calculateAbsencesBreakdown(entries: TimeEntry[]): AbsencesBreakd
     } else if (entry.entry_type === 'justified_absence') {
       breakdown.justifiedAbsenceDays += 1;
     }
+
+    // Horas em falta sem justificação dentro de um dia normalmente
+    // trabalhado (ex: saiu mais cedo, chegou atrasado) — coexistem com
+    // hours_worked, independentemente do entry_type. Pedido por Ricardo
+    // (12/10/2026), migração 0016.
+    breakdown.unjustifiedAbsenceHours += entry.unjustified_absence_hours ?? 0;
   }
 
   return breakdown;
