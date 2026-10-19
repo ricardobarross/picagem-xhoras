@@ -97,6 +97,12 @@ export type UserSettings = {
   meal_allowance_daily_value: number;
   meal_allowance_payment_method: PaymentMethod;
   meal_allowance_taxable: boolean;
+  // Quando true, a alimentação não é paga nos meses em que o subsídio de
+  // férias ou de Natal é pago — regra confirmada por Ricardo (06/10/2026:
+  // "quando recebemos subsídio de férias não recebemos a alimentação").
+  // Default false para não alterar o comportamento de outras contas
+  // (migração 0017).
+  no_meal_allowance_in_subsidy_month: boolean;
 
   bonus_payment_type: BonusPaymentType;
   bonus_lump_sum_month: number | null;

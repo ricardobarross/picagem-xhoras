@@ -226,6 +226,17 @@ export default async function DashboardPage({
   if (combinedBonusAndExtras > 0) {
     remuneracaoRows.push({ label: 'Gratificação', qty: '1', unit: euro(combinedBonusAndExtras), total: combinedBonusAndExtras });
   }
+  // Excedente do teto de alimentação: não é pago como alimentação isenta,
+  // é pago junto com a Gratificação — mostrado como linha própria na
+  // descrição, mas o valor já está somado ao total tributável (ver
+  // mealAllowanceExcess em calculateGrossBreakdown). Pedido por Ricardo
+  // (19/10/2026).
+  if (payslip.gross.mealAllowanceExcess > 0) {
+    remuneracaoRows.push({
+      label: 'Refeição Extra (acima do teto, paga com a Gratificação)',
+      total: payslip.gross.mealAllowanceExcess,
+    });
+  }
   if (payslip.gross.holidaySubsidy > 0) {
     remuneracaoRows.push({
       label: `Subsídio de Férias (pago em ${monthNamePt(subsidyMonths.holiday)})`,
@@ -239,14 +250,24 @@ export default async function DashboardPage({
     });
   }
 
+  // IRS do subsídio de férias/Natal é sempre retenção AUTÓNOMA (Art. 99º-C,
+  // nº5 do CIRS) — mostrado como uma linha à parte quando há subsídio no
+  // mês, tal como no recibo real (confirmado com o Recibo Nº 1538 de
+  // Ricardo, set/2026: duas linhas de "Imposto S/Rendimento" distintas).
   const descontoRows: { label: string; rate?: string; total: number }[] = [
     {
       label: 'Segurança Social',
       rate: `${typedSettings.social_security_rate || 11}%`,
       total: payslip.deductions.socialSecurity,
     },
-    { label: 'Imposto S/ Rendimento (IRS)', total: payslip.deductions.irs },
+    { label: 'Imposto S/ Rendimento (IRS)', total: payslip.deductions.regularIrs },
   ];
+  if (payslip.deductions.subsidyIrs > 0) {
+    descontoRows.push({
+      label: 'Imposto S/ Rendimento (IRS) — Subsídios',
+      total: payslip.deductions.subsidyIrs,
+    });
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -403,7 +424,10 @@ export default async function DashboardPage({
                 {
                   label: isEffective ? 'Prémios & Extras' : 'Sábados',
                   value: isEffective
-                    ? payslip.gross.fixedBonus + payslip.gross.overtimeIncome + payslip.gross.extraMealsIncome
+                    ? payslip.gross.fixedBonus +
+                      payslip.gross.overtimeIncome +
+                      payslip.gross.extraMealsIncome +
+                      payslip.gross.mealAllowanceExcess
                     : payslip.gross.fromSaturdayHours,
                   color: 'var(--series-saturday)',
                 },
@@ -509,11 +533,15 @@ export default async function DashboardPage({
 
               <div className="grid grid-cols-1 gap-1 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground sm:grid-cols-2">
                 <span>Valor sujeito a Segurança Social: {euro(payslip.gross.ssTaxableBase)}</span>
-                {/* A base de IRS é o valor tributável já líquido de Segurança Social
-                    (ver calculateDeductions em lib/salary-calculator.ts: irsBase =
-                    totalTaxable - socialSecurity) — mostrar totalTaxable aqui era
-                    enganador, não batia com o valor que o cálculo do IRS realmente usa. */}
-                <span>Valor sujeito a IRS: {euro(Math.max(0, payslip.gross.totalTaxable - payslip.deductions.socialSecurity))}</span>
+                {/* O IRS incide sobre o valor tributável BRUTO, sem desconto de SS
+                    (ver calculateDeductions em lib/salary-calculator.ts) — confirmado
+                    em dois recibos reais de Ricardo. Os subsídios de férias/Natal têm
+                    retenção autónoma (Art. 99º-C CIRS), por isso aparecem numa base à
+                    parte quando pagos no mês. */}
+                <span>Valor sujeito a IRS: {euro(payslip.deductions.regularIrsBase)}</span>
+                {payslip.deductions.subsidyIrsBase > 0 && (
+                  <span>Valor sujeito a IRS (Subsídios): {euro(payslip.deductions.subsidyIrsBase)}</span>
+                )}
               </div>
             </>
           ) : (

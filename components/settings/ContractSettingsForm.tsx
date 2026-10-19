@@ -103,6 +103,9 @@ export function ContractSettingsForm({
   const [mealAllowanceCap, setMealAllowanceCap] = useState(
     String(initialSettings.meal_allowance_monthly_cap ?? 0),
   );
+  const [noMealAllowanceInSubsidyMonth, setNoMealAllowanceInSubsidyMonth] = useState<boolean>(
+    initialSettings.no_meal_allowance_in_subsidy_month ?? false,
+  );
 
   // Subsídio de Transporte
   const [transportValue, setTransportValue] = useState(
@@ -164,6 +167,7 @@ export function ContractSettingsForm({
         meal_allowance_daily_value: mealVal,
         meal_allowance_monthly_cap: mealCap,
         meal_allowance_payment_method: mealPaymentMethod,
+        no_meal_allowance_in_subsidy_month: noMealAllowanceInSubsidyMonth,
         transport_allowance_value: transportVal,
         transport_allowance_frequency: transportFrequency,
         payroll_cutoff_day: cutoff,
@@ -528,6 +532,20 @@ export function ContractSettingsForm({
                   Ex.: 209,50€ — deixa 0 se a empresa não tiver um teto mensal fixo
                 </span>
               </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-2 rounded-md border border-dashed border-input p-3">
+              <input
+                type="checkbox"
+                id="noMealAllowanceInSubsidyMonth"
+                checked={noMealAllowanceInSubsidyMonth}
+                onChange={(e) => setNoMealAllowanceInSubsidyMonth(e.target.checked)}
+                className="h-4 w-4 rounded border-input"
+              />
+              <label htmlFor="noMealAllowanceInSubsidyMonth" className="text-xs cursor-pointer">
+                <span className="font-medium">Sem alimentação no mês do subsídio:</span> não paga o subsídio de
+                alimentação nos meses em que o subsídio de férias ou de Natal é pago.
+              </label>
             </div>
           </div>
 

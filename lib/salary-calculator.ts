@@ -76,6 +76,14 @@ export interface GrossBreakdown {
   // quando desligado. Pedido por Ricardo (09/2026), migração 0015.
   overtimeBonusHours: number;
   extraMealsIncome: number;
+  // Parte do subsídio de alimentação normal que ultrapassa o teto mensal
+  // (meal_allowance_monthly_cap) — paga pela empresa junto com a
+  // Gratificação/Prémio, não como alimentação isenta (pedido por Ricardo,
+  // 19/10/2026). 0 quando não há teto configurado ou quando o valor
+  // bruto não o ultrapassa. Já somada a totalBonusAndExtras/totalTaxable;
+  // mostrada como linha própria na Dashboard, mas contabilizada junto da
+  // Gratificação.
+  mealAllowanceExcess: number;
   holidaySubsidy: number;
   christmasSubsidy: number;
   contractRegime: 'effective' | 'hourly';
@@ -97,7 +105,21 @@ export interface GrossBreakdown {
 
 export interface DeductionsBreakdown {
   socialSecurity: number;
+  // Soma de regularIrs + subsidyIrs — mantido para quem só precisa do
+  // total (ex: netPay = totalGross - totalDeductions).
   irs: number;
+  // Discriminação do IRS entre remuneração normal e subsídios de
+  // férias/Natal, que têm sempre retenção AUTÓNOMA (Art. 99º-C, nº5 do
+  // CIRS) — nunca podem ser somados à remuneração do mês para efeitos de
+  // cálculo do imposto. Confirmado no recibo real de Ricardo (set/2026,
+  // Nº 1538): dois descontos de IRS distintos no mesmo recibo (671,00€
+  // sobre 3.275€ de remuneração normal + 88,00€ sobre 1.500€ de Subsídio
+  // de Férias, sozinho). Usado pela UI para mostrar, tal como no recibo
+  // real, duas linhas de IRS quando há subsídio no mês (migração 0017).
+  regularIrsBase: number;
+  regularIrs: number;
+  subsidyIrsBase: number; // soma do subsídio de férias + Natal pagos no mês
+  subsidyIrs: number;
   totalDeductions: number;
 }
 
@@ -223,13 +245,29 @@ export function calculateGrossBreakdown(
 ): GrossBreakdown {
   const isEffective = settings.contract_regime === 'effective';
 
+  // Mês em que é pago subsídio de férias e/ou de Natal, independente do
+  // regime — usado para a regra de alimentação abaixo.
+  const isSubsidyMonth =
+    referenceMonth !== undefined &&
+    (referenceMonth === subsidyMonths.holiday || referenceMonth === subsidyMonths.christmas);
+
   // Subsídios de transporte e alimentação padrão. O subsídio de
   // alimentação tem um teto mensal opcional (0 = sem teto, comportamento
   // inalterado) — pedido por Ricardo (09/2026): nesta empresa nunca passa
   // de 209,50€/mês, independentemente de quantos dias se trabalhe.
+  //
+  // Além disso, em meses com subsídio de férias/Natal, a alimentação pode
+  // não ser paga de todo (regra confirmada por Ricardo, 06/10/2026, com o
+  // pessoal da empresa — "quando recebemos subsídio de férias não
+  // recebemos a alimentação"; confirmado no recibo real de set/2026, Nº
+  // 1538, sem linha de alimentação nesse mês). Opcional (checkbox,
+  // migração 0017) para não alterar o comportamento de outras contas.
   const rawMealAllowance = settings.meal_allowance_daily_value * daysWorkedInPeriod;
   const mealAllowanceCap = settings.meal_allowance_monthly_cap || 0;
-  const mealAllowance = mealAllowanceCap > 0 ? Math.min(rawMealAllowance, mealAllowanceCap) : rawMealAllowance;
+  const cappedMealAllowance =
+    mealAllowanceCap > 0 ? Math.min(rawMealAllowance, mealAllowanceCap) : rawMealAllowance;
+  const mealAllowance =
+    settings.no_meal_allowance_in_subsidy_month && isSubsidyMonth ? 0 : cappedMealAllowance;
   const transportAllowance =
     settings.transport_allowance_frequency === 'daily'
       ? settings.transport_allowance_value * daysWorkedInPeriod
@@ -262,6 +300,17 @@ export function calculateGrossBreakdown(
     const estimatedExtraMeals = hours.overtimeDays;
     const extraMealsIncome = estimatedExtraMeals * extraMealValue;
 
+    // Excedente do teto do subsídio de alimentação: o que ultrapassa
+    // meal_allowance_monthly_cap não é pago como alimentação isenta — é
+    // pago junto com a Gratificação (confirmado por Ricardo, 19/10/2026).
+    // Não se aplica no mês em que a alimentação já fica a 0€ por inteiro
+    // (regra da migração 0017) — nesse caso o valor simplesmente não é
+    // pago, não é redirecionado.
+    const mealAllowanceExcess =
+      mealAllowanceCap > 0 && !(settings.no_meal_allowance_in_subsidy_month && isSubsidyMonth)
+        ? Math.max(0, rawMealAllowance - mealAllowanceCap)
+        : 0;
+
     // Subsídios de Férias e Natal se o mês coincidir
     let holidaySubsidy = 0;
     let christmasSubsidy = 0;
@@ -275,8 +324,9 @@ export function calculateGrossBreakdown(
     }
 
     // No modelo da empresa do utilizador:
-    // Horas extras e refeições extras vêm camufladas dentro da rubrica de prémio/gratificação
-    const totalBonusAndExtras = fixedBonus + overtimeIncome + extraMealsIncome;
+    // Horas extras, refeições extras e o excedente do teto de alimentação
+    // vêm camuflados dentro da rubrica de prémio/gratificação
+    const totalBonusAndExtras = fixedBonus + overtimeIncome + extraMealsIncome + mealAllowanceExcess;
 
     // Faltas injustificadas (por hora) e baixa (por dia) descontam ao
     // Vencimento Base — confirmado com os recibos reais (ver comentário em
@@ -322,6 +372,7 @@ export function calculateGrossBreakdown(
       overtimeIncome,
       overtimeBonusHours,
       extraMealsIncome,
+      mealAllowanceExcess,
       holidaySubsidy,
       christmasSubsidy,
       contractRegime: 'effective',
@@ -378,6 +429,7 @@ export function calculateGrossBreakdown(
     overtimeIncome: 0,
     overtimeBonusHours: 0,
     extraMealsIncome: 0,
+    mealAllowanceExcess: 0,
     holidaySubsidy: 0,
     christmasSubsidy: 0,
     contractRegime: 'hourly',
@@ -458,12 +510,36 @@ export function calculateDeductions(
 ): DeductionsBreakdown {
   const ssRate = settings.social_security_rate || 11;
   const socialSecurity = gross.ssTaxableBase * (ssRate / 100);
-  const irsBase = Math.max(0, gross.totalTaxable - socialSecurity); // SS dedutível antes do IRS
-  const irs = calculateIrs(irsBase, settings, brackets);
+
+  // O IRS incide sobre o rendimento tributável BRUTO — a Segurança Social
+  // NÃO é dedutível antes do IRS. (Correção: o código anterior assumia o
+  // contrário, "SS dedutível antes do IRS", nunca validado contra um
+  // recibo real. Confirmado em dois recibos reais de Ricardo: ago/2026,
+  // "Valor sujeito a IRS" = 2.531€ = 1.500+1.031, sem desconto de SS; e
+  // set/2026, Nº 1538, "Valor sujeito a IRS" = 4.775€ = soma exata das
+  // remunerações, de novo sem desconto de SS.)
+  //
+  // Os subsídios de férias e de Natal têm sempre retenção AUTÓNOMA (Art.
+  // 99º-C, nº5 do CIRS): nunca somados à remuneração do mês — cada um usa
+  // o seu próprio valor, isolado, na tabela de retenção mensal. O
+  // restante (Vencimento Base + Prémio + Gratificação) é tributado junto,
+  // numa base só. Confirmado com o recibo real de set/2026 (Nº 1538):
+  // dois descontos de IRS distintos no mesmo recibo.
+  const regularIrsBase = Math.max(0, gross.totalTaxable - gross.holidaySubsidy - gross.christmasSubsidy);
+  const regularIrs = calculateIrs(regularIrsBase, settings, brackets);
+  const subsidyIrsBase = gross.holidaySubsidy + gross.christmasSubsidy;
+  const subsidyIrs =
+    calculateIrs(gross.holidaySubsidy, settings, brackets) +
+    calculateIrs(gross.christmasSubsidy, settings, brackets);
+  const irs = regularIrs + subsidyIrs;
 
   return {
     socialSecurity,
     irs,
+    regularIrsBase,
+    regularIrs,
+    subsidyIrsBase,
+    subsidyIrs,
     totalDeductions: socialSecurity + irs,
   };
 }
@@ -481,7 +557,12 @@ export function calculatePayslip(params: {
 }): PayslipSummary {
   const { entries, settings, brackets = [], referenceMonth, subsidyMonths } = params;
 
-  const daysWorkedInPeriod = new Set(entries.map((e) => e.entry_date)).size;
+  // Bug confirmado (investigação de 05-06/10/2026, corrigido em 19/10/2026):
+  // contava TODOS os tipos de registo (incluindo faltas/baixa), inflando a
+  // alimentação. Só os dias efetivamente trabalhados ('work') contam.
+  const daysWorkedInPeriod = new Set(
+    entries.filter((e) => e.entry_type === 'work').map((e) => e.entry_date),
+  ).size;
 
   const hours = calculateHoursBreakdown(entries);
   const absences = calculateAbsencesBreakdown(entries);

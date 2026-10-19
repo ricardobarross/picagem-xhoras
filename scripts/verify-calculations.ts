@@ -9,6 +9,7 @@ import {
   calculateGrossBreakdown,
   calculateAbsencesBreakdown,
   calculateIrs,
+  calculateDeductions,
   calculatePayslip,
 } from '../lib/salary-calculator';
 import { formatHours, getDayCategory, isPortugueseHoliday, getPortugueseHolidays } from '../lib/time-utils';
@@ -56,6 +57,7 @@ function baseSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     meal_allowance_monthly_cap: 0,
     meal_allowance_payment_method: 'card',
     meal_allowance_taxable: false,
+    no_meal_allowance_in_subsidy_month: false,
     bonus_payment_type: 'monthly_installments',
     bonus_lump_sum_month: null,
     transport_allowance_value: 0,
@@ -389,6 +391,179 @@ check(
   'Falta de dia inteiro (8h) + falta parcial (3,5h) somam 11,5h, sem duplicar',
   calculateAbsencesBreakdown(mixedAbsenceEntries).unjustifiedAbsenceHours,
   11.5,
+);
+
+console.log('\n--- Migração 0017: IRS autónomo para subsídios (Art. 99º-C CIRS) + alimentação a 0€ no mês do subsídio ---');
+
+// Tabela de escalões REAL da conta de Ricardo (irs_tax_brackets,
+// 2026, 3 dependentes) — usada para validar contra o Recibo Nº 1538
+// (set/2026): dois descontos de IRS reais no mesmo recibo, 671,00€ sobre
+// 3.275€ de remuneração normal (Vencimento Base + Prémio de Produção +
+// Gratificação) e 88,00€ sobre 1.500€ de Subsídio de Férias, sozinho —
+// confirmando o Art. 99º-C, nº5 do CIRS: os subsídios têm sempre
+// retenção autónoma, nunca somados à remuneração do mês.
+const ricardoRealBrackets: IrsTaxBracket[] = [
+  { id: 'r1', user_settings_id: 's', min_income: 1212, max_income: 1819, rate: 24.1, deduction: 193.33, scale: 'monthly', dependent_deduction: 34.29, created_at: '' },
+  { id: 'r2', user_settings_id: 's', min_income: 2499, max_income: 3305, rate: 38.36, deduction: 487.66, scale: 'monthly', dependent_deduction: 34.29, created_at: '' },
+];
+const ricardoRealSettings = baseSettings({ irs_marital_status: 'single', irs_dependents_count: 3 });
+const setembroRecibo = {
+  fromWeekdayHours: 1500, fromSaturdayHours: 0, fromSundayHours: 0, fromHolidayHours: 0,
+  mealAllowance: 0, transportAllowance: 0,
+  totalTaxable: 4775, totalNonTaxable: 0, totalGross: 4775,
+  ssTaxableBase: 3150, weekendIncome: 0, weekendDeclared: true,
+  baseSalary: 1500, fixedBonus: 0, overtimeIncome: 0, overtimeBonusHours: 0, extraMealsIncome: 0, mealAllowanceExcess: 0,
+  holidaySubsidy: 1500, christmasSubsidy: 0, contractRegime: 'effective' as const,
+  unjustifiedAbsenceHours: 0, unjustifiedAbsenceDeduction: 0, sickLeaveDays: 0, sickLeaveDeduction: 0,
+  justifiedAbsenceDays: 0,
+};
+const setembroDeductions = calculateDeductions(setembroRecibo, ricardoRealSettings, ricardoRealBrackets);
+check(
+  'IRS da remuneração normal (3.275€, sem subsídio) — esperado 665,76€ (real: 671,00€, ~0,8% de diferença, igual à precisão já documentada na Tabela II acima)',
+  setembroDeductions.regularIrs,
+  665.76,
+);
+check(
+  'IRS do Subsídio de Férias sozinho (1.500€, retenção autónoma) — esperado 65,30€ (real: 88,00€ — maior desvio aqui; só há este recibo real com subsídio para calibrar, a confirmar com mais recibos)',
+  setembroDeductions.subsidyIrs,
+  65.3,
+);
+checkTrue(
+  'IRS total não soma SS antes do cálculo (regressão: SS NUNCA é dedutível antes do IRS)',
+  Math.abs(setembroDeductions.regularIrs - calculateIrs(3275, ricardoRealSettings, ricardoRealBrackets)) < 0.01,
+);
+
+console.log('\n--- Migração 0017: alimentação a 0€ no mês do subsídio (Ricardo, 06/10/2026: "quando recebemos subsídio de férias não recebemos a alimentação") ---');
+const noMealInSubsidySettings = baseSettings({
+  meal_allowance_daily_value: 10,
+  no_meal_allowance_in_subsidy_month: true,
+  holiday_subsidy_month: 9,
+});
+const subsidyMonthEntries: TimeEntry[] = Array.from({ length: 20 }, (_, i) => ({
+  id: `sm${i}`,
+  user_id: 'u',
+  entry_date: `2026-09-${String(i + 1).padStart(2, '0')}`,
+  entry_type: 'work' as const,
+  hours_worked: 8,
+  unjustified_absence_hours: 0,
+  notes: null,
+  created_at: '',
+  updated_at: '',
+}));
+const subsidyMonthPayslip = calculatePayslip({
+  entries: subsidyMonthEntries,
+  settings: noMealInSubsidySettings,
+  referenceMonth: 9,
+});
+check(
+  'Checkbox ligado + mês do subsídio de férias: alimentação fica a 0€ (não 200€)',
+  subsidyMonthPayslip.gross.mealAllowance,
+  0,
+);
+const normalMonthPayslip = calculatePayslip({
+  entries: subsidyMonthEntries,
+  settings: noMealInSubsidySettings,
+  referenceMonth: 3, // não é o mês do subsídio
+});
+check(
+  'Checkbox ligado mas mês SEM subsídio: alimentação paga normalmente (20×10€=200€)',
+  normalMonthPayslip.gross.mealAllowance,
+  200,
+);
+const checkboxOffPayslip = calculatePayslip({
+  entries: subsidyMonthEntries,
+  settings: baseSettings({ meal_allowance_daily_value: 10, no_meal_allowance_in_subsidy_month: false, holiday_subsidy_month: 9 }),
+  referenceMonth: 9,
+});
+check(
+  'Checkbox desligado (default): alimentação paga mesmo no mês do subsídio (comportamento inalterado para outras contas)',
+  checkboxOffPayslip.gross.mealAllowance,
+  200,
+);
+
+console.log('\n--- Migração 0018 (19/10/2026): bug dos dias de alimentação + excedente do teto pago com a Gratificação ---');
+
+const mixedEntries: TimeEntry[] = [
+  ...Array.from({ length: 20 }, (_, i) => ({
+    id: `w${i}`,
+    user_id: 'u',
+    entry_date: `2026-06-${String(i + 1).padStart(2, '0')}`,
+    entry_type: 'work' as const,
+    hours_worked: 8,
+    unjustified_absence_hours: 0,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  })),
+  ...Array.from({ length: 5 }, (_, i) => ({
+    id: `f${i}`,
+    user_id: 'u',
+    entry_date: `2026-06-${String(21 + i).padStart(2, '0')}`,
+    entry_type: 'justified_absence' as const,
+    hours_worked: 0,
+    unjustified_absence_hours: 0,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  })),
+];
+const mixedSettings = baseSettings({ meal_allowance_daily_value: 10, meal_allowance_monthly_cap: 0 });
+const mixedPayslip = calculatePayslip({ entries: mixedEntries, settings: mixedSettings, referenceMonth: 6 });
+check(
+  '20 dias trabalhados + 5 dias de falta justificada: alimentação conta só os 20 (200€, não 250€)',
+  mixedPayslip.gross.mealAllowance,
+  200,
+);
+
+const excessSettings = baseSettings({
+  meal_allowance_daily_value: 10,
+  meal_allowance_monthly_cap: 209.5,
+  base_salary: 1000,
+  fixed_bonus: 0,
+  overtime_fixed_rate: 0,
+  extra_meal_value: 0,
+});
+const excessEntries: TimeEntry[] = Array.from({ length: 25 }, (_, i) => ({
+  id: `e${i}`,
+  user_id: 'u',
+  entry_date: `2026-06-${String(i + 1).padStart(2, '0')}`,
+  entry_type: 'work' as const,
+  hours_worked: 8,
+  unjustified_absence_hours: 0,
+  notes: null,
+  created_at: '',
+  updated_at: '',
+}));
+const excessPayslip = calculatePayslip({ entries: excessEntries, settings: excessSettings, referenceMonth: 6 });
+check('25 dias × 10€ (250€) fica limitado a 209,50€ na linha de Alimentação', excessPayslip.gross.mealAllowance, 209.5);
+check('O excedente (250€ − 209,50€ = 40,50€) aparece em mealAllowanceExcess, não desaparece', excessPayslip.gross.mealAllowanceExcess, 40.5);
+check(
+  'O excedente entra no total tributável (somado à Gratificação, não isento)',
+  excessPayslip.gross.totalTaxable,
+  1000 + 40.5,
+);
+check('Rendimento bruto total inclui o excedente + a alimentação capada', excessPayslip.gross.totalGross, 1000 + 40.5 + 209.5);
+
+const excessSubsidySettings = baseSettings({
+  meal_allowance_daily_value: 10,
+  meal_allowance_monthly_cap: 209.5,
+  no_meal_allowance_in_subsidy_month: true,
+  holiday_subsidy_month: 9,
+  base_salary: 1000,
+  fixed_bonus: 0,
+  overtime_fixed_rate: 0,
+  extra_meal_value: 0,
+});
+const excessSubsidyPayslip = calculatePayslip({
+  entries: excessEntries,
+  settings: excessSubsidySettings,
+  referenceMonth: 9,
+});
+check('Mês do subsídio com "sem alimentação": alimentação a 0€', excessSubsidyPayslip.gross.mealAllowance, 0);
+check(
+  'Mês do subsídio com "sem alimentação": sem excedente redirecionado (0€, não 40,50€)',
+  excessSubsidyPayslip.gross.mealAllowanceExcess,
+  0,
 );
 
 console.log(`\n${failures === 0 ? '✅ Todos os testes passaram.' : `❌ ${failures} teste(s) falharam.`}`);
