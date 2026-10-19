@@ -591,7 +591,7 @@ check(
 // para 8h.
 const bonusVoidedByFullDayAbsenceEntries: TimeEntry[] = [
   { id: 'bv2-ot', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 86, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
-  { id: 'bv2-fa', user_id: 'u', entry_date: '2026-02-14', entry_type: 'unjustified_absence', hours_worked: 0, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
+  { id: 'bv2-fa', user_id: 'u', entry_date: '2026-02-14', entry_type: 'unjustified_absence', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
 ];
 const bonusVoidedByFullDayAbsencePayslip = calculatePayslip({
   entries: bonusVoidedByFullDayAbsenceEntries,
