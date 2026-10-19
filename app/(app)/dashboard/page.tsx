@@ -478,6 +478,14 @@ export default async function DashboardPage({
               Inclui +{formatHours(payslip.gross.overtimeBonusHours)} de bónus do patrão (meta: a cada 32h reais, +8h)
             </p>
           )}
+          {payslip.gross.overtimeBonusHours === 0 &&
+            typedSettings.overtime_bonus_enabled &&
+            payslip.hours.overtimeHours >= 32 &&
+            payslip.gross.unjustifiedAbsenceHours > 0 && (
+              <p className="col-span-2 text-xs text-muted-foreground sm:col-span-4">
+                Bateu a meta de 32h, mas o bónus do patrão foi cancelado por falta injustificada no período
+              </p>
+            )}
         </CardContent>
       </Card>
 

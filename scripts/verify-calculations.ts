@@ -566,5 +566,53 @@ check(
   0,
 );
 
+console.log('\n--- Migração 0019 (19/10/2026): falta injustificada cancela o bónus de 32h por inteiro ---');
+
+const bonusVoidSettings = baseSettings({ overtime_fixed_rate: 12, overtime_bonus_enabled: true });
+
+// 40h extra (sábado) + falta PARCIAL (2h) sem justificação noutro dia do
+// mesmo período — deve cancelar as 8h de bónus por inteiro, não só reduzir.
+const bonusVoidedByPartialAbsenceEntries: TimeEntry[] = [
+  { id: 'bv-ot', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 40, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
+  { id: 'bv-pa', user_id: 'u', entry_date: '2026-02-10', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 2, notes: null, created_at: '', updated_at: '' },
+];
+const bonusVoidedByPartialAbsencePayslip = calculatePayslip({
+  entries: bonusVoidedByPartialAbsenceEntries,
+  settings: bonusVoidSettings,
+});
+check(
+  'Bateu a meta de 32h, mas 2h de falta parcial sem justificação cancela o bónus por inteiro (0h, não 8h)',
+  bonusVoidedByPartialAbsencePayslip.gross.overtimeBonusHours,
+  0,
+);
+
+// 86h extra (duas metas de 32h batidas = 16h de bónus normalmente) + 1 dia
+// inteiro de falta injustificada — cancela as 16h por inteiro, não reduz
+// para 8h.
+const bonusVoidedByFullDayAbsenceEntries: TimeEntry[] = [
+  { id: 'bv2-ot', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 86, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
+  { id: 'bv2-fa', user_id: 'u', entry_date: '2026-02-14', entry_type: 'unjustified_absence', hours_worked: 0, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
+];
+const bonusVoidedByFullDayAbsencePayslip = calculatePayslip({
+  entries: bonusVoidedByFullDayAbsenceEntries,
+  settings: bonusVoidSettings,
+});
+check(
+  'Duas metas de 32h batidas (86h extra), mas 1 dia inteiro de falta injustificada cancela as 16h de bónus por inteiro (0h, não 8h)',
+  bonusVoidedByFullDayAbsencePayslip.gross.overtimeBonusHours,
+  0,
+);
+
+// Regressão: sem falta injustificada, o bónus continua a aplicar normalmente.
+const bonusKeptEntries: TimeEntry[] = [
+  { id: 'bv3-ot', user_id: 'u', entry_date: '2026-02-07', entry_type: 'work', hours_worked: 40, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' },
+];
+const bonusKeptPayslip = calculatePayslip({ entries: bonusKeptEntries, settings: bonusVoidSettings });
+check(
+  'Regressão: sem falta injustificada no período, o bónus de 8h continua normal',
+  bonusKeptPayslip.gross.overtimeBonusHours,
+  8,
+);
+
 console.log(`\n${failures === 0 ? '✅ Todos os testes passaram.' : `❌ ${failures} teste(s) falharam.`}`);
 process.exitCode = failures === 0 ? 0 : 1;

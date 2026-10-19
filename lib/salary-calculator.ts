@@ -285,9 +285,15 @@ export function calculateGrossBreakdown(
     // Meta de horas extras do patrão: a cada 32h reais de horas extras no
     // período, soma-se +8h de horas extras bónus — opcional (checkbox),
     // porque pode ser temporário. Pedido por Ricardo (09/2026), migração 0015.
-    const overtimeBonusHours = settings.overtime_bonus_enabled
-      ? Math.floor(hours.overtimeHours / 32) * 8
-      : 0;
+    // Regra adicional (Ricardo, 19/10/2026): qualquer falta injustificada no
+    // período — de dia inteiro ou parcial (unjustified_absence_hours, migração
+    // 0016) — cancela as 8h de bónus POR INTEIRO, mesmo que a meta de 32h
+    // tenha sido batida mais de uma vez nesse período. absences.unjustifiedAbsenceHours
+    // já soma os dois tipos de falta injustificada.
+    const overtimeBonusHours =
+      settings.overtime_bonus_enabled && absences.unjustifiedAbsenceHours === 0
+        ? Math.floor(hours.overtimeHours / 32) * 8
+        : 0;
     const effectiveOvertimeHours = hours.overtimeHours + overtimeBonusHours;
     const overtimeIncome = effectiveOvertimeHours * overtimeRate;
 
