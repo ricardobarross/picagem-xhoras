@@ -197,6 +197,23 @@ export type SubsidyPaymentOverride = {
   updated_at: string;
 };
 
+// Redução intercalar de IRS num mês selecionável, por ano — migração
+// 0020 (03/11/2026). O governo português corta por vezes as taxas de
+// retenção na fonte de IRS a meio do ano (ex: Novembro/2026, -50%);
+// como a percentagem e o mês variam de ano para ano, ficam
+// configuráveis aqui em vez de fixos em código. Sem registo para um
+// mês, não há redução (comportamento inalterado).
+export type IrsReductionOverride = {
+  id: string;
+  user_id: string;
+  reference_year: number;
+  reference_month: number; // 1 a 12
+  reduction_percentage: number; // 0 a 100
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 // Período de apuração de horas extras com data inicial/final explícitas —
 // para quando o dia de fecho da folha muda de ciclo para ciclo (ver
 // supabase/migrations/0014_*.sql). Ao cobrir a data de referência de um
@@ -298,6 +315,16 @@ export type Database = {
           received_month: number;
         };
         Update: Partial<SubsidyPaymentOverride>;
+        Relationships: [];
+      };
+      irs_reduction_overrides: {
+        Row: IrsReductionOverride;
+        Insert: Partial<IrsReductionOverride> & {
+          user_id: string;
+          reference_year: number;
+          reference_month: number;
+        };
+        Update: Partial<IrsReductionOverride>;
         Relationships: [];
       };
       payslip_receipts: {

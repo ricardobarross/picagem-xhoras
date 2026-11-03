@@ -5,8 +5,10 @@ import { ContractSettingsForm } from '@/components/settings/ContractSettingsForm
 import { RatesForm } from '@/components/settings/RatesForm';
 import { DescontosForm } from '@/components/settings/DescontosForm';
 import { SubsidyOverridesForm } from '@/components/settings/SubsidyOverridesForm';
+import { IrsReductionForm } from '@/components/settings/IrsReductionForm';
 import { OvertimePeriodOverridesForm } from '@/components/settings/OvertimePeriodOverridesForm';
 import type {
+  IrsReductionOverride,
   IrsTaxBracket,
   OvertimePeriodOverride,
   Profile,
@@ -59,6 +61,11 @@ export default async function ConfiguracoesPage() {
     .select('*')
     .eq('user_id', user.id);
 
+  const { data: irsReductionOverrides } = await supabase
+    .from('irs_reduction_overrides')
+    .select('*')
+    .eq('user_id', user.id);
+
   const isEffective = typedSettings.contract_regime === 'effective';
 
   return (
@@ -90,6 +97,14 @@ export default async function ConfiguracoesPage() {
           initialOverrides={(subsidyOverrides ?? []) as SubsidyPaymentOverride[]}
         />
       )}
+
+      {/* Redução intercalar de IRS num mês selecionável (ex: medida do
+          governo em Novembro/2026) — vale para os dois regimes, já que
+          qualquer um paga IRS. */}
+      <IrsReductionForm
+        userId={user.id}
+        initialOverrides={(irsReductionOverrides ?? []) as IrsReductionOverride[]}
+      />
 
       {/* Histórico de períodos de apuração de horas extras com data
           inicial/final explícitas — pra quando o dia de fecho da folha
