@@ -11,10 +11,11 @@ import {
   calculateIrs,
   calculateDeductions,
   calculatePayslip,
+  resolveIrsReduction,
 } from '../lib/salary-calculator';
 import { formatHours, getDayCategory, isPortugueseHoliday, getPortugueseHolidays } from '../lib/time-utils';
 import { auditContractLosses } from '../lib/loss-calculator';
-import type { IrsTaxBracket, TimeEntry, UserSettings } from '../types/database.types';
+import type { IrsReductionOverride, IrsTaxBracket, TimeEntry, UserSettings } from '../types/database.types';
 
 let failures = 0;
 
@@ -73,6 +74,25 @@ function baseSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     updated_at: new Date().toISOString(),
     ...overrides,
   };
+}
+
+// Migração 0021 (02/11/2026): helper para fixtures mais antigas (0015,
+// 0017, 0018) que geravam dias de calendário consecutivos como "dias
+// trabalhados" — incluindo fins de semana, o que deixou de contar para a
+// alimentação normal. Gera N dias de SEMANA (seg-sex) a partir de
+// startDate, saltando sábados/domingos, para a contagem de dias de cada
+// fixture continuar a bater com o que o teste pretende validar.
+function weekdayDatesFrom(startDate: string, count: number): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  while (dates.length < count) {
+    const dow = cursor.getUTCDay(); // 0 = domingo, 6 = sábado
+    if (dow !== 0 && dow !== 6) {
+      dates.push(cursor.toISOString().slice(0, 10));
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
 }
 
 console.log('--- F-03: arredondamento de formatHours (bug "Xh 60m") ---');
@@ -273,10 +293,10 @@ check('Percentagem de perda em indemnização não é NaN quando agreedRealSalar
 console.log('\n--- Migração 0015: teto do subsídio de alimentação (Ricardo, 09/2026: nunca passa de 209,50€/mês) ---');
 const mealCapSettings = baseSettings({ meal_allowance_daily_value: 10, meal_allowance_monthly_cap: 209.5 });
 const mealCapPayslip = calculatePayslip({
-  entries: Array.from({ length: 25 }, (_, i) => ({
+  entries: weekdayDatesFrom('2026-02-02', 25).map((date, i) => ({
     id: `mc${i}`,
     user_id: 'u',
-    entry_date: `2026-02-${String(i + 1).padStart(2, '0')}`,
+    entry_date: date,
     entry_type: 'work' as const,
     hours_worked: 8,
     unjustified_absence_hours: 0,
@@ -293,10 +313,10 @@ check(
 );
 const mealNoCapSettings = baseSettings({ meal_allowance_daily_value: 10, meal_allowance_monthly_cap: 0 });
 const mealNoCapPayslip = calculatePayslip({
-  entries: Array.from({ length: 25 }, (_, i) => ({
+  entries: weekdayDatesFrom('2026-02-02', 25).map((date, i) => ({
     id: `mnc${i}`,
     user_id: 'u',
-    entry_date: `2026-02-${String(i + 1).padStart(2, '0')}`,
+    entry_date: date,
     entry_type: 'work' as const,
     hours_worked: 8,
     unjustified_absence_hours: 0,
@@ -409,7 +429,7 @@ const ricardoRealBrackets: IrsTaxBracket[] = [
 const ricardoRealSettings = baseSettings({ irs_marital_status: 'single', irs_dependents_count: 3 });
 const setembroRecibo = {
   fromWeekdayHours: 1500, fromSaturdayHours: 0, fromSundayHours: 0, fromHolidayHours: 0,
-  mealAllowance: 0, transportAllowance: 0,
+  mealAllowance: 0, mealAllowanceDaysInPeriod: 0, transportAllowance: 0,
   totalTaxable: 4775, totalNonTaxable: 0, totalGross: 4775,
   ssTaxableBase: 3150, weekendIncome: 0, weekendDeclared: true,
   baseSalary: 1500, fixedBonus: 0, overtimeIncome: 0, overtimeBonusHours: 0, extraMealsIncome: 0, mealAllowanceExcess: 0,
@@ -439,10 +459,10 @@ const noMealInSubsidySettings = baseSettings({
   no_meal_allowance_in_subsidy_month: true,
   holiday_subsidy_month: 9,
 });
-const subsidyMonthEntries: TimeEntry[] = Array.from({ length: 20 }, (_, i) => ({
+const subsidyMonthEntries: TimeEntry[] = weekdayDatesFrom('2026-09-01', 20).map((date, i) => ({
   id: `sm${i}`,
   user_id: 'u',
-  entry_date: `2026-09-${String(i + 1).padStart(2, '0')}`,
+  entry_date: date,
   entry_type: 'work' as const,
   hours_worked: 8,
   unjustified_absence_hours: 0,
@@ -484,10 +504,10 @@ check(
 console.log('\n--- Migração 0018 (19/10/2026): bug dos dias de alimentação + excedente do teto pago com a Gratificação ---');
 
 const mixedEntries: TimeEntry[] = [
-  ...Array.from({ length: 20 }, (_, i) => ({
+  ...weekdayDatesFrom('2026-06-01', 20).map((date, i) => ({
     id: `w${i}`,
     user_id: 'u',
-    entry_date: `2026-06-${String(i + 1).padStart(2, '0')}`,
+    entry_date: date,
     entry_type: 'work' as const,
     hours_worked: 8,
     unjustified_absence_hours: 0,
@@ -495,10 +515,13 @@ const mixedEntries: TimeEntry[] = [
     created_at: '',
     updated_at: '',
   })),
-  ...Array.from({ length: 5 }, (_, i) => ({
+  // Datas distintas das 20 de 'work' acima (que agora se estendem além do
+  // dia 20 por saltarem fins de semana) — nunca o mesmo dia como 'work' e
+  // 'justified_absence' ao mesmo tempo.
+  ...weekdayDatesFrom('2026-06-27', 5).map((date, i) => ({
     id: `f${i}`,
     user_id: 'u',
-    entry_date: `2026-06-${String(21 + i).padStart(2, '0')}`,
+    entry_date: date,
     entry_type: 'justified_absence' as const,
     hours_worked: 0,
     unjustified_absence_hours: 0,
@@ -523,10 +546,10 @@ const excessSettings = baseSettings({
   overtime_fixed_rate: 0,
   extra_meal_value: 0,
 });
-const excessEntries: TimeEntry[] = Array.from({ length: 25 }, (_, i) => ({
+const excessEntries: TimeEntry[] = weekdayDatesFrom('2026-06-01', 25).map((date, i) => ({
   id: `e${i}`,
   user_id: 'u',
-  entry_date: `2026-06-${String(i + 1).padStart(2, '0')}`,
+  entry_date: date,
   entry_type: 'work' as const,
   hours_worked: 8,
   unjustified_absence_hours: 0,
@@ -612,6 +635,210 @@ check(
   'Regressão: sem falta injustificada no período, o bónus de 8h continua normal',
   bonusKeptPayslip.gross.overtimeBonusHours,
   8,
+);
+
+console.log('\n--- Migração 0021 (02/11/2026): dias de alimentação só contam dias de semana completos (seg-sex) ---');
+
+// Regressão: só dias de semana 'work', sem sábado/domingo nem falta parcial
+// — o comportamento deve ser idêntico ao de antes da migração (alimentação
+// = dias x valor diário, sem distinção de mealAllowanceDaysInPeriod).
+const weekdayOnlySettings = baseSettings({ meal_allowance_daily_value: 9.5, meal_allowance_monthly_cap: 0 });
+const weekdayOnlyEntries: TimeEntry[] = [
+  { id: 'wd1', user_id: 'u', entry_date: '2026-09-21', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' }, // segunda
+  { id: 'wd2', user_id: 'u', entry_date: '2026-09-22', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' }, // terça
+  { id: 'wd3', user_id: 'u', entry_date: '2026-09-23', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' }, // quarta
+  { id: 'wd4', user_id: 'u', entry_date: '2026-09-24', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' }, // quinta
+  { id: 'wd5', user_id: 'u', entry_date: '2026-09-25', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' }, // sexta
+];
+const weekdayOnlyPayslip = calculatePayslip({ entries: weekdayOnlyEntries, settings: weekdayOnlySettings, referenceMonth: 9 });
+check('Regressão: 5 dias de semana trabalhados, sem sábado/domingo/falta parcial: alimentação = 5 x 9,50€ = 47,50€', weekdayOnlyPayslip.gross.mealAllowance, 47.5);
+
+// Sábado trabalhado tem o seu próprio mecanismo de refeição extra (migração
+// 0015 regra 3) — não deve somar também à alimentação normal.
+const saturdayEntries: TimeEntry[] = [
+  ...weekdayOnlyEntries,
+  { id: 'sat1', user_id: 'u', entry_date: '2026-09-26', entry_type: 'work', hours_worked: 8, unjustified_absence_hours: 0, notes: null, created_at: '', updated_at: '' }, // sábado
+];
+const saturdayPayslip = calculatePayslip({ entries: saturdayEntries, settings: weekdayOnlySettings, referenceMonth: 9 });
+check(
+  'Sábado trabalhado não soma à alimentação normal: continua 5 x 9,50€ = 47,50€, não 6 x 9,50€',
+  saturdayPayslip.gross.mealAllowance,
+  47.5,
+);
+
+// Dia com falta parcial sem justificação não conta como presença completa
+// para a alimentação, mesmo sendo entry_type === 'work'.
+const mealPartialAbsenceEntries: TimeEntry[] = [
+  ...weekdayOnlyEntries,
+  { id: 'pa1', user_id: 'u', entry_date: '2026-09-28', entry_type: 'work', hours_worked: 4, unjustified_absence_hours: 3.5, notes: null, created_at: '', updated_at: '' }, // segunda seguinte, falta parcial
+];
+const mealPartialAbsencePayslip = calculatePayslip({ entries: mealPartialAbsenceEntries, settings: weekdayOnlySettings, referenceMonth: 9 });
+check(
+  'Dia de semana com falta parcial sem justificação não conta para a alimentação: continua 5 x 9,50€ = 47,50€, não 6 x 9,50€',
+  mealPartialAbsencePayslip.gross.mealAllowance,
+  47.5,
+);
+
+// Cenário real do Recibo Nº 1706 (outubro/2026): 21 dias de semana + 3
+// sábados trabalhados = 24 dias 'work' no total (como a app já mostrava),
+// mas 1 desses dias de semana (09/10, saída mais cedo) tem falta parcial
+// sem justificação — a alimentação real paga só 20 dias (190,00€), não 24
+// (209,50€, já no teto, como a app simulava antes desta correção).
+const recibo1706WeekdayDates = [
+  '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25',
+  '2026-09-28', '2026-09-29', '2026-09-30',
+  '2026-10-01', '2026-10-02', '2026-10-05', '2026-10-06', '2026-10-07',
+  '2026-10-08', '2026-10-09', '2026-10-12', '2026-10-13', '2026-10-14',
+  '2026-10-15', '2026-10-16', '2026-10-19',
+]; // 21 dias de semana (seg-sex), incluindo a sexta 09/10 com falta parcial
+const recibo1706SaturdayDates = ['2026-09-26', '2026-10-03', '2026-10-17']; // 3 sábados trabalhados
+const recibo1706Entries: TimeEntry[] = [
+  ...recibo1706WeekdayDates.map((date, i) => ({
+    id: `r1706-wd${i}`,
+    user_id: 'u',
+    entry_date: date,
+    entry_type: 'work' as const,
+    hours_worked: date === '2026-10-09' ? 4 : 8,
+    unjustified_absence_hours: date === '2026-10-09' ? 3.5 : 0,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  })),
+  ...recibo1706SaturdayDates.map((date, i) => ({
+    id: `r1706-sat${i}`,
+    user_id: 'u',
+    entry_date: date,
+    entry_type: 'work' as const,
+    hours_worked: 8,
+    unjustified_absence_hours: 0,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  })),
+];
+const recibo1706Settings = baseSettings({ meal_allowance_daily_value: 9.5, meal_allowance_monthly_cap: 209.5 });
+const recibo1706Payslip = calculatePayslip({ entries: recibo1706Entries, settings: recibo1706Settings, referenceMonth: 10 });
+check(
+  'Recibo Nº 1706 (out/2026): 21 dias de semana + 3 sábados − 1 falta parcial = 20 dias de alimentação (190,00€, sem excedente)',
+  recibo1706Payslip.gross.mealAllowance,
+  190,
+);
+check('Recibo Nº 1706: sem excedente redirecionado para a Gratificação (não bate no teto)', recibo1706Payslip.gross.mealAllowanceExcess, 0);
+
+console.log('\n--- Migração 0020 (03/11/2026): redução intercalar de IRS num mês selecionável ---');
+
+const irsReductionOverrides2026: IrsReductionOverride[] = [
+  {
+    id: 'irr1',
+    user_id: 'u',
+    reference_year: 2026,
+    reference_month: 11,
+    reduction_percentage: 50,
+    notes: null,
+    created_at: '',
+    updated_at: '',
+  },
+];
+
+check(
+  'resolveIrsReduction: mês com override devolve a percentagem registada (50%)',
+  resolveIrsReduction(irsReductionOverrides2026, 2026, 11),
+  50,
+);
+check(
+  'resolveIrsReduction: mês sem override devolve 0 (sem redução, regressão)',
+  resolveIrsReduction(irsReductionOverrides2026, 2026, 12),
+  0,
+);
+check(
+  'resolveIrsReduction: mesmo mês, ano diferente sem override devolve 0',
+  resolveIrsReduction(irsReductionOverrides2026, 2025, 11),
+  0,
+);
+
+// Cenário com subsídio de Natal pago em Novembro, para confirmar que a
+// redução incide sobre AS DUAS retenções (normal e autónoma do
+// subsídio), não só a normal — confirmado por pesquisa (e-konomista.pt,
+// 20/10/2026) para a medida de Novembro/2026.
+const irsReductionGross = calculateGrossBreakdown(
+  { weekday: 0, saturday: 0, sunday: 0, holiday: 0, total: 0, standardHours: 0, overtimeHours: 0, overtimeDays: 0 },
+  baseSettings({ base_salary: 1500, fixed_bonus: 0, overtime_fixed_rate: 0, christmas_subsidy_month: 11 }),
+  0,
+  11,
+  { unjustifiedAbsenceHours: 0, sickLeaveDays: 0, justifiedAbsenceDays: 0 },
+  { holiday: 1, christmas: 11 },
+);
+// irs_calculation_type: 'fixed_rate' evita depender de escalões (uma
+// lista vazia de brackets faria calculateIrs devolver sempre 0, o que
+// tornaria este teste vazio em vez de verificar a redução).
+const irsReductionSettings = baseSettings({
+  base_salary: 1500,
+  fixed_bonus: 0,
+  overtime_fixed_rate: 0,
+  irs_calculation_type: 'fixed_rate',
+  irs_fixed_rate: 20,
+});
+
+const deductionsNoReduction = calculateDeductions(irsReductionGross, irsReductionSettings, [], 0);
+const deductionsHalfReduction = calculateDeductions(irsReductionGross, irsReductionSettings, [], 50);
+
+check(
+  'Sem redução (0%): irsReductionApplied fica a 0',
+  deductionsNoReduction.irsReductionApplied,
+  0,
+);
+check(
+  'Com 50% de redução: irsReductionApplied regista os 50%',
+  deductionsHalfReduction.irsReductionApplied,
+  50,
+);
+check(
+  'Com 50% de redução: a retenção normal (regularIrs) fica em metade da sem-redução',
+  deductionsHalfReduction.regularIrs,
+  deductionsNoReduction.regularIrs / 2,
+);
+check(
+  'Com 50% de redução: a retenção autónoma do subsídio (subsidyIrs) TAMBÉM fica em metade — incide sobre as duas, não só a normal',
+  deductionsHalfReduction.subsidyIrs,
+  deductionsNoReduction.subsidyIrs / 2,
+);
+check(
+  'Com 50% de redução: o IRS total (irs) é a soma das duas já reduzidas',
+  deductionsHalfReduction.irs,
+  deductionsHalfReduction.regularIrs + deductionsHalfReduction.subsidyIrs,
+);
+checkTrue(
+  'A redução é só um adiantamento — não altera totalTaxable/totalGross (o bruto não muda, só a retenção)',
+  deductionsNoReduction.regularIrsBase === deductionsHalfReduction.regularIrsBase,
+);
+
+// Ponta a ponta via calculatePayslip, confirmando a propagação do
+// parâmetro opcional irsReductionPercentage pela cadeia de chamadas.
+const irsReductionEntries: TimeEntry[] = [];
+const payslipNoReduction = calculatePayslip({
+  entries: irsReductionEntries,
+  settings: irsReductionSettings,
+  referenceMonth: 11,
+});
+const payslipWithReduction = calculatePayslip({
+  entries: irsReductionEntries,
+  settings: irsReductionSettings,
+  referenceMonth: 11,
+  irsReductionPercentage: 50,
+});
+check(
+  'calculatePayslip sem irsReductionPercentage: comportamento inalterado (0%, regressão)',
+  payslipNoReduction.deductions.irsReductionApplied,
+  0,
+);
+check(
+  'calculatePayslip com irsReductionPercentage=50: propaga até deductions.irsReductionApplied',
+  payslipWithReduction.deductions.irsReductionApplied,
+  50,
+);
+checkTrue(
+  'calculatePayslip com redução de 50%: o IRS pago é menor do que sem redução',
+  payslipWithReduction.deductions.irs < payslipNoReduction.deductions.irs,
 );
 
 console.log(`\n${failures === 0 ? '✅ Todos os testes passaram.' : `❌ ${failures} teste(s) falharam.`}`);

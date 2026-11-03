@@ -14,7 +14,7 @@
 //      - Sábado: weekday_rate + saturday_extra_per_hour
 //      - Domingo: weekday_rate × sunday_multiplier
 
-import type { TimeEntry, UserSettings, IrsTaxBracket, SubsidyPaymentOverride } from '@/types/database.types';
+import type { TimeEntry, UserSettings, IrsTaxBracket, SubsidyPaymentOverride, IrsReductionOverride } from '@/types/database.types';
 import { getDayCategory } from './time-utils';
 
 export interface HoursBreakdown {
@@ -44,6 +44,13 @@ export interface GrossBreakdown {
   fromSundayHours: number;
   fromHolidayHours: number;
   mealAllowance: number;
+  // Nº de dias efetivamente usados para calcular mealAllowance (antes do
+  // teto) — migração 0021 (02/11/2026): pode ser diferente de
+  // daysWorkedInPeriod (usado para o transporte), porque a alimentação só
+  // conta dias de semana completos (sem sábado/domingo, sem falta parcial).
+  // Exposto para a UI mostrar o nº de dias correto na linha de Sub. de
+  // Refeição, em vez de recalcular (e desatualizar) a sua própria contagem.
+  mealAllowanceDaysInPeriod: number;
   transportAllowance: number;
   totalTaxable: number; // entra para a base de IRS ("valor declarado")
   totalNonTaxable: number; // isento / não declarado (recebido sem descontos)
@@ -120,6 +127,13 @@ export interface DeductionsBreakdown {
   regularIrs: number;
   subsidyIrsBase: number; // soma do subsídio de férias + Natal pagos no mês
   subsidyIrs: number;
+  // Percentagem de redução intercalar de IRS efetivamente aplicada este
+  // mês (0 = nenhuma) — migração 0020 (03/11/2026). Exposto para a UI
+  // mostrar uma nota informativa sem recalcular nada. Aplicada a
+  // regularIrs e subsidyIrs (ambas as retenções, não só a normal —
+  // confirmado para a redução de Novembro/2026, que incide também sobre
+  // o subsídio de Natal quando pago em Novembro).
+  irsReductionApplied: number;
   totalDeductions: number;
 }
 
@@ -223,6 +237,19 @@ export function resolveSubsidyMonths(
   };
 }
 
+// Resolve a percentagem de redução intercalar de IRS aplicável num dado
+// ano/mês — migração 0020 (03/11/2026). Sem registo em
+// irs_reduction_overrides para esse ano/mês, devolve 0 (sem redução,
+// comportamento inalterado). Mesmo padrão de resolveSubsidyMonths.
+export function resolveIrsReduction(
+  overrides: IrsReductionOverride[],
+  year: number,
+  month: number,
+): number {
+  const override = overrides.find((o) => o.reference_year === year && o.reference_month === month);
+  return override?.reduction_percentage ?? 0;
+}
+
 // ---------------------------------------------------------------------
 // 2–3. Rendimento bruto
 // ---------------------------------------------------------------------
@@ -242,6 +269,12 @@ export function calculateGrossBreakdown(
     holiday: settings.holiday_subsidy_month || 1,
     christmas: settings.christmas_subsidy_month || 11,
   },
+  // Migração 0021 (02/11/2026): dias de alimentação podem ser uma
+  // contagem mais restrita do que os dias "trabalhados" usados para o
+  // subsídio de transporte (daysWorkedInPeriod) — por defeito são os
+  // mesmos (comportamento inalterado quando não especificado).
+  // calculatePayslip passa uma contagem própria (ver mais abaixo).
+  mealAllowanceDaysInPeriod: number = daysWorkedInPeriod,
 ): GrossBreakdown {
   const isEffective = settings.contract_regime === 'effective';
 
@@ -262,7 +295,7 @@ export function calculateGrossBreakdown(
   // recebemos a alimentação"; confirmado no recibo real de set/2026, Nº
   // 1538, sem linha de alimentação nesse mês). Opcional (checkbox,
   // migração 0017) para não alterar o comportamento de outras contas.
-  const rawMealAllowance = settings.meal_allowance_daily_value * daysWorkedInPeriod;
+  const rawMealAllowance = settings.meal_allowance_daily_value * mealAllowanceDaysInPeriod;
   const mealAllowanceCap = settings.meal_allowance_monthly_cap || 0;
   const cappedMealAllowance =
     mealAllowanceCap > 0 ? Math.min(rawMealAllowance, mealAllowanceCap) : rawMealAllowance;
@@ -366,6 +399,7 @@ export function calculateGrossBreakdown(
       fromSundayHours: hours.sunday * overtimeRate,
       fromHolidayHours: hours.holiday * overtimeRate,
       mealAllowance,
+      mealAllowanceDaysInPeriod,
       transportAllowance,
       totalTaxable,
       totalNonTaxable,
@@ -423,6 +457,7 @@ export function calculateGrossBreakdown(
     fromSundayHours,
     fromHolidayHours,
     mealAllowance,
+    mealAllowanceDaysInPeriod,
     transportAllowance,
     totalTaxable,
     totalNonTaxable,
@@ -513,6 +548,11 @@ export function calculateDeductions(
   gross: GrossBreakdown,
   settings: UserSettings,
   brackets: IrsTaxBracket[] = [],
+  // Migração 0020 (03/11/2026): redução intercalar de IRS (ex: -50% em
+  // Novembro/2026), resolvida fora desta função via resolveIrsReduction
+  // e passada aqui já como percentagem — 0 = sem redução, comportamento
+  // inalterado.
+  irsReductionPercentage: number = 0,
 ): DeductionsBreakdown {
   const ssRate = settings.social_security_rate || 11;
   const socialSecurity = gross.ssTaxableBase * (ssRate / 100);
@@ -534,18 +574,29 @@ export function calculateDeductions(
   const regularIrsBase = Math.max(0, gross.totalTaxable - gross.holidaySubsidy - gross.christmasSubsidy);
   const regularIrs = calculateIrs(regularIrsBase, settings, brackets);
   const subsidyIrsBase = gross.holidaySubsidy + gross.christmasSubsidy;
-  const subsidyIrs =
+  const subsidyIrsFull =
     calculateIrs(gross.holidaySubsidy, settings, brackets) +
     calculateIrs(gross.christmasSubsidy, settings, brackets);
-  const irs = regularIrs + subsidyIrs;
+
+  // Redução intercalar de IRS (migração 0020): aplica-se às DUAS
+  // retenções (normal e autónoma dos subsídios), confirmado por
+  // pesquisa (e-konomista.pt, 20/10/2026) para a medida de
+  // Novembro/2026. É só um adiantamento — não reduz o IRS anual devido,
+  // o acerto fica para a declaração do ano seguinte; aqui só reduz a
+  // retenção mensal mostrada/descontada.
+  const reductionFactor = 1 - Math.max(0, Math.min(100, irsReductionPercentage)) / 100;
+  const regularIrsReduced = regularIrs * reductionFactor;
+  const subsidyIrsReduced = subsidyIrsFull * reductionFactor;
+  const irs = regularIrsReduced + subsidyIrsReduced;
 
   return {
     socialSecurity,
     irs,
     regularIrsBase,
-    regularIrs,
+    regularIrs: regularIrsReduced,
     subsidyIrsBase,
-    subsidyIrs,
+    subsidyIrs: subsidyIrsReduced,
+    irsReductionApplied: irsReductionPercentage > 0 ? irsReductionPercentage : 0,
     totalDeductions: socialSecurity + irs,
   };
 }
@@ -560,8 +611,12 @@ export function calculatePayslip(params: {
   brackets?: IrsTaxBracket[];
   referenceMonth?: number; // 1 a 12
   subsidyMonths?: { holiday: number; christmas: number };
+  // Migração 0020 (03/11/2026): percentagem de redução intercalar de
+  // IRS já resolvida (ver resolveIrsReduction) — 0/omitido = sem
+  // redução, comportamento inalterado.
+  irsReductionPercentage?: number;
 }): PayslipSummary {
-  const { entries, settings, brackets = [], referenceMonth, subsidyMonths } = params;
+  const { entries, settings, brackets = [], referenceMonth, subsidyMonths, irsReductionPercentage = 0 } = params;
 
   // Bug confirmado (investigação de 05-06/10/2026, corrigido em 19/10/2026):
   // contava TODOS os tipos de registo (incluindo faltas/baixa), inflando a
@@ -570,12 +625,50 @@ export function calculatePayslip(params: {
     entries.filter((e) => e.entry_type === 'work').map((e) => e.entry_date),
   ).size;
 
+  // Migração 0021 (02/11/2026): dias de alimentação só contam dias de
+  // semana completos. Confirmado com o recibo real Nº 1706 (out/2026):
+  // no período 21/09–20/10 a app tinha 24 dias 'work' (21 dias de semana
+  // + 3 sábados trabalhados), mas o recibo real só pagou 20 dias de
+  // alimentação — exatamente os 21 dias de semana menos o dia 09/10
+  // (saiu mais cedo, falta parcial sem justificação esse dia). Sábado/
+  // domingo trabalhado já tem a sua própria "Refeição Extra"
+  // (overtimeDays, migração 0015 regra 3) — não soma também à
+  // alimentação normal, e um dia com falta parcial não conta como
+  // presença completa.
+  const mealAllowanceDaysInPeriod = new Set(
+    entries
+      .filter((e) => {
+        if (e.entry_type !== 'work') return false;
+        const category = getDayCategory(e.entry_date);
+        if (category === 'saturday' || category === 'sunday') return false;
+        if ((e.unjustified_absence_hours ?? 0) > 0) return false;
+        return true;
+      })
+      .map((e) => e.entry_date),
+  ).size;
+
   const hours = calculateHoursBreakdown(entries);
   const absences = calculateAbsencesBreakdown(entries);
   const gross = subsidyMonths
-    ? calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth, absences, subsidyMonths)
-    : calculateGrossBreakdown(hours, settings, daysWorkedInPeriod, referenceMonth, absences);
-  const deductions = calculateDeductions(gross, settings, brackets);
+    ? calculateGrossBreakdown(
+        hours,
+        settings,
+        daysWorkedInPeriod,
+        referenceMonth,
+        absences,
+        subsidyMonths,
+        mealAllowanceDaysInPeriod,
+      )
+    : calculateGrossBreakdown(
+        hours,
+        settings,
+        daysWorkedInPeriod,
+        referenceMonth,
+        absences,
+        undefined,
+        mealAllowanceDaysInPeriod,
+      );
+  const deductions = calculateDeductions(gross, settings, brackets, irsReductionPercentage);
 
   return {
     hours,

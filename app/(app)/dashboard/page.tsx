@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { calculatePayslip, resolveSubsidyMonths } from '@/lib/salary-calculator';
+import { calculatePayslip, resolveSubsidyMonths, resolveIrsReduction } from '@/lib/salary-calculator';
 import {
   formatHours,
   formatDatePt,
@@ -14,6 +14,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DailyHoursChart, StackedBar, type DailyHours } from '@/components/dashboard/DashboardCharts';
 import type {
+  IrsReductionOverride,
   IrsTaxBracket,
   OvertimePeriodOverride,
   SubsidyPaymentOverride,
@@ -116,16 +117,21 @@ export default async function DashboardPage({
 
   const periodYear = period.end.getFullYear();
 
-  const [{ data: entries }, { data: brackets }, { data: subsidyOverrides }] = await Promise.all([
-    supabase
-      .from('time_entries')
-      .select('*')
-      .eq('user_id', user.id)
-      .gte('entry_date', periodStart)
-      .lte('entry_date', periodEnd),
-    supabase.from('irs_tax_brackets').select('*').eq('user_settings_id', typedSettings.id),
-    supabase.from('subsidy_payment_overrides').select('*').eq('user_id', user.id).eq('reference_year', periodYear),
-  ]);
+  const [{ data: entries }, { data: brackets }, { data: subsidyOverrides }, { data: irsReductionOverrides }] =
+    await Promise.all([
+      supabase
+        .from('time_entries')
+        .select('*')
+        .eq('user_id', user.id)
+        .gte('entry_date', periodStart)
+        .lte('entry_date', periodEnd),
+      supabase.from('irs_tax_brackets').select('*').eq('user_settings_id', typedSettings.id),
+      supabase.from('subsidy_payment_overrides').select('*').eq('user_id', user.id).eq('reference_year', periodYear),
+      // Migração 0020 (03/11/2026): redução intercalar de IRS num mês
+      // selecionável (ex: Novembro/2026, -50%) — sem registo para o
+      // ano/mês do período, resolveIrsReduction devolve 0 (sem redução).
+      supabase.from('irs_reduction_overrides').select('*').eq('user_id', user.id).eq('reference_year', periodYear),
+    ]);
 
   const typedEntries = (entries ?? []) as TimeEntry[];
 
@@ -135,12 +141,20 @@ export default async function DashboardPage({
     periodYear,
   );
 
+  const referenceMonth = period.end.getMonth() + 1;
+  const irsReductionPercentage = resolveIrsReduction(
+    (irsReductionOverrides ?? []) as IrsReductionOverride[],
+    periodYear,
+    referenceMonth,
+  );
+
   const payslip = calculatePayslip({
     entries: typedEntries,
     settings: typedSettings,
     brackets: (brackets ?? []) as IrsTaxBracket[],
-    referenceMonth: period.end.getMonth() + 1,
+    referenceMonth,
     subsidyMonths,
+    irsReductionPercentage,
   });
 
   const rateMissing = isEffective
@@ -180,7 +194,6 @@ export default async function DashboardPage({
   // lib/salary-calculator.ts): base×12/2080 arredondado, e base/30.
   const legalHourlyRate = typedSettings.base_salary > 0 ? Number(((typedSettings.base_salary * 12) / 2080).toFixed(2)) : 0;
   const dailyRate = typedSettings.base_salary > 0 ? Number((typedSettings.base_salary / 30).toFixed(2)) : 0;
-  const daysWorkedInPeriod = new Set(typedEntries.filter((e) => e.entry_type === 'work').map((e) => e.entry_date)).size;
   // No recibo real, horas extras/refeições extras vêm sempre camufladas
   // numa única linha "Gratificação" junto com o prémio fixo — ver comentário
   // em calculateGrossBreakdown.
@@ -215,8 +228,12 @@ export default async function DashboardPage({
   if (payslip.gross.mealAllowance > 0) {
     remuneracaoRows.push({
       label: 'Sub. de Refeição',
-      qty: daysWorkedInPeriod > 0 ? String(daysWorkedInPeriod) : undefined,
-      unit: daysWorkedInPeriod > 0 ? euro(typedSettings.meal_allowance_daily_value || 0) : undefined,
+      // Migração 0021 (02/11/2026): usa a contagem de dias que a app
+      // efetivamente usou para calcular mealAllowance (só dias de semana
+      // completos), em vez de recalcular aqui uma contagem diferente e
+      // desatualizada (que incluía sábados/domingos trabalhados).
+      qty: payslip.gross.mealAllowanceDaysInPeriod > 0 ? String(payslip.gross.mealAllowanceDaysInPeriod) : undefined,
+      unit: payslip.gross.mealAllowanceDaysInPeriod > 0 ? euro(typedSettings.meal_allowance_daily_value || 0) : undefined,
       total: payslip.gross.mealAllowance,
     });
   }
@@ -549,6 +566,19 @@ export default async function DashboardPage({
                 <span>Valor sujeito a IRS: {euro(payslip.deductions.regularIrsBase)}</span>
                 {payslip.deductions.subsidyIrsBase > 0 && (
                   <span>Valor sujeito a IRS (Subsídios): {euro(payslip.deductions.subsidyIrsBase)}</span>
+                )}
+                {/* Migração 0020 (03/11/2026): redução intercalar de IRS
+                    (ex: governo corta as taxas de retenção a meio do ano,
+                    como em Novembro/2026) — é só um adiantamento, não
+                    reduz o IRS anual devido (o acerto fica para a
+                    declaração do ano seguinte), por isso fica claro que
+                    não é uma mudança estrutural no salário. */}
+                {payslip.deductions.irsReductionApplied > 0 && (
+                  <span className="sm:col-span-2 text-[var(--accent)]">
+                    Redução intercalar de IRS aplicada este mês (−{payslip.deductions.irsReductionApplied}%) —
+                    medida temporária do governo (adiantamento; o acerto fica para a declaração do ano seguinte),
+                    não é uma mudança estrutural no salário.
+                  </span>
                 )}
               </div>
             </>
