@@ -544,7 +544,7 @@ export function ContractSettingsForm({
               />
               <label htmlFor="noMealAllowanceInSubsidyMonth" className="text-xs cursor-pointer">
                 <span className="font-medium">Sem alimentação no mês do subsídio:</span> não paga o subsídio de
-                alimentação nos meses em que o subsídio de férias ou de Natal é pago.
+                alimentação no mês em que o subsídio de férias é pago (o subsídio de Natal não afeta a alimentação).
               </label>
             </div>
           </div>

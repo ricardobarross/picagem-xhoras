@@ -278,11 +278,13 @@ export function calculateGrossBreakdown(
 ): GrossBreakdown {
   const isEffective = settings.contract_regime === 'effective';
 
-  // Mês em que é pago subsídio de férias e/ou de Natal, independente do
-  // regime — usado para a regra de alimentação abaixo.
-  const isSubsidyMonth =
-    referenceMonth !== undefined &&
-    (referenceMonth === subsidyMonths.holiday || referenceMonth === subsidyMonths.christmas);
+  // Mês em que é pago o subsídio de FÉRIAS, independente do regime —
+  // usado para a regra de alimentação abaixo. O subsídio de Natal NÃO
+  // afeta a alimentação (corrigido por Ricardo, 03/11/2026: "isso na
+  // empresa só acontece com o subsídio de férias, o de Natal é pago
+  // normalmente") — a versão anterior suprimia a alimentação em
+  // qualquer um dos dois meses, o que estava errado.
+  const isSubsidyMonth = referenceMonth !== undefined && referenceMonth === subsidyMonths.holiday;
 
   // Subsídios de transporte e alimentação padrão. O subsídio de
   // alimentação tem um teto mensal opcional (0 = sem teto, comportamento

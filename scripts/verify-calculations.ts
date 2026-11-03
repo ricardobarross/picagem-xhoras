@@ -501,6 +501,18 @@ check(
   200,
 );
 
+console.log('\n--- Migração 0021b (03/11/2026): subsídio de Natal NÃO afeta a alimentação (só o de férias) ---');
+const christmasMonthPayslip = calculatePayslip({
+  entries: subsidyMonthEntries,
+  settings: noMealInSubsidySettings, // holiday_subsidy_month: 9, christmas_subsidy_month: default 11
+  referenceMonth: 11, // mês do subsídio de Natal, não o de férias
+});
+check(
+  'Checkbox ligado + mês do subsídio de NATAL: alimentação paga normalmente (200€, não 0€)',
+  christmasMonthPayslip.gross.mealAllowance,
+  200,
+);
+
 console.log('\n--- Migração 0018 (19/10/2026): bug dos dias de alimentação + excedente do teto pago com a Gratificação ---');
 
 const mixedEntries: TimeEntry[] = [
